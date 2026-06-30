@@ -5,10 +5,16 @@ Validates the S-4 reconciliation logic before building the real Seeq merge
 phase. Not production code — run it, inspect it, throw it away.
 
 Judgment calls recorded here:
-  JC1 (merge metadata): B — structured merged_from list preserving source IDs
-    and all metadata fields; nothing flattened or dropped.
-  JC2 (split metadata): A — full metadata copied to every fragment; each
-    fragment gets split_warning=True so the caller knows to decide ownership.
+  JC1 (merge): B — structured merged_from list preserving source IDs and all
+    metadata fields; annotation text deduplicated by exact stripped match so a
+    split-then-merge round-trip doesn't double the note. Near-exact/similarity
+    dedup deferred to production.
+  JC2 (split): A — full metadata copied to every fragment; split_warning=True
+    and a note_origin marker on every fragment (symmetric — field always present):
+      note_origin="original"            → fragment keeping the pre-split UUID
+      note_origin="split_from:<uuid>"   → fragment(s) receiving a copy
+    A user edit to a fragment should clear note_origin; the note then becomes
+    original to that fragment. This spike simulates edits via direct mutation.
 """
 
 from __future__ import annotations
@@ -113,6 +119,26 @@ def _find_components(
     return components
 
 
+def _build_merged_from(caps: list[Capsule]) -> list[dict[str, Any]]:
+    """
+    Build the merged_from list for a merge event.
+
+    Deduplicates by annotation text (exact stripped match) so a split-then-merge
+    round-trip doesn't produce two identical sentences in the combined record.
+    Near-exact / similarity matching is deferred to production.
+    """
+    seen_annotations: set[str] = set()
+    entries: list[dict[str, Any]] = []
+    for cap in caps:
+        text = (cap.metadata.get("annotation") or "").strip()
+        if text and text in seen_annotations:
+            continue
+        if text:
+            seen_annotations.add(text)
+        entries.append({"id": cap.id, **cap.metadata})
+    return entries
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -126,10 +152,13 @@ def reconcile(existing: list[Capsule], incoming: list[Window]) -> list[Capsule]:
       1 existing, 1 incoming  → preserve UUID + metadata, update bounds (drift)
       N existing, 1 incoming  → merge: earliest-created UUID survives;
                                  metadata = {"merged_from": [{id, ...fields}, ...]}
-                                 sorted by capsule start (JC1=B)
+                                 sorted by capsule start, annotation text
+                                 deduplicated (JC1=B)
       1 existing, N incoming  → split: original UUID on largest-overlap fragment;
-                                 full metadata copied to every fragment with
-                                 split_warning=True (JC2=A)
+                                 full metadata copied to every fragment;
+                                 note_origin="original" on primary,
+                                 note_origin="split_from:<id>" on secondaries;
+                                 split_warning=True on all (JC2=A)
       M existing, N incoming  → complex merge+split: merge logic for anchor,
                                  split logic for fragments, complex_warning=True
       existing with no incoming overlap → silently dropped (Seeq removed it)
@@ -160,12 +189,10 @@ def reconcile(existing: list[Capsule], incoming: list[Window]) -> list[Capsule]:
 
         # Build base metadata for this component.
         if is_merge:
-            # JC1=B: preserve full metadata from every source capsule.
+            # JC1=B: deduplicated structured list; annotation text dedup guards
+            # against a split fragment re-merging and doubling the same sentence.
             base_meta: dict[str, Any] = {
-                "merged_from": [
-                    {"id": c.id, **c.metadata}
-                    for c in sorted(e_caps, key=lambda c: c.start)
-                ]
+                "merged_from": _build_merged_from(sorted(e_caps, key=lambda c: c.start))
             }
             if is_split:
                 base_meta["complex_warning"] = True
@@ -193,13 +220,15 @@ def reconcile(existing: list[Capsule], incoming: list[Window]) -> list[Capsule]:
             ranked = sorted(i_wins, key=total_overlap, reverse=True)
             primary, secondaries = ranked[0], ranked[1:]
 
-            # JC2=A: full metadata on every fragment so nothing silently vanishes;
-            # split_warning signals that annotation ownership is unresolved.
+            # JC2=A: full metadata on every fragment; note_origin is always present
+            # (symmetric) so downstream can filter on the field without silently
+            # missing the primary fragment. A user edit to any fragment should clear
+            # note_origin — the note then becomes original to that fragment.
             result.append(Capsule(
                 id=anchor.id,
                 start=primary.start,
                 end=primary.end,
-                metadata={**base_meta, "split_warning": True},
+                metadata={**base_meta, "split_warning": True, "note_origin": "original"},
                 created_at=anchor.created_at,
             ))
             for win in secondaries:
@@ -207,7 +236,11 @@ def reconcile(existing: list[Capsule], incoming: list[Window]) -> list[Capsule]:
                     id=str(uuid.uuid4()),
                     start=win.start,
                     end=win.end,
-                    metadata={**base_meta, "split_warning": True},
+                    metadata={
+                        **base_meta,
+                        "split_warning": True,
+                        "note_origin": f"split_from:{anchor.id}",
+                    },
                 ))
 
     return result
@@ -295,10 +328,15 @@ def _run_tests() -> None:
     primary = next(r for r in result if r.id == "orig-id")
     check("Original ID on larger fragment [09:30, 12:00]",
           primary.start == _dt(9, 30) and primary.end == _dt(12))
-    check("Both fragments have split_warning (JC2=A)",
+    check("Both fragments have split_warning",
           all(r.metadata.get("split_warning") is True for r in result))
     check("Both fragments carry annotation (JC2=A)",
           all(r.metadata.get("annotation") == "Long outage" for r in result))
+    secondary_s3 = next(r for r in result if r.id != "orig-id")
+    check("Primary has note_origin='original'",
+          primary.metadata.get("note_origin") == "original")
+    check("Secondary has note_origin='split_from:orig-id'",
+          secondary_s3.metadata.get("note_origin") == "split_from:orig-id")
 
     # ------------------------------------------------------------------
     # Scenario 4: Idempotency — two identical reconcile passes must not
@@ -325,6 +363,73 @@ def _run_tests() -> None:
     check("One capsule minted", len(result) == 1)
     check("Has a UUID", bool(result[0].id))
     check("Empty metadata", result[0].metadata == {})
+
+    # ------------------------------------------------------------------
+    # Scenario 6: Split provenance — both fragments carry the full note
+    # and the correct note_origin marker. Same geometry as Scenario 3.
+    # ------------------------------------------------------------------
+    print("\nScenario 6: Split provenance markers")
+    cap_prov = Capsule(
+        id="prov-id", start=_dt(8), end=_dt(12),
+        metadata={"annotation": "Long outage"}, created_at=_dt(0),
+    )
+    result = reconcile([cap_prov], [win_small, win_large])
+    prim6 = next(r for r in result if r.id == "prov-id")
+    sec6  = next(r for r in result if r.id != "prov-id")
+    check("Both fragments carry full annotation",
+          all(r.metadata.get("annotation") == "Long outage" for r in result))
+    check("Primary note_origin='original'",
+          prim6.metadata.get("note_origin") == "original")
+    check("Secondary note_origin='split_from:prov-id'",
+          sec6.metadata.get("note_origin") == "split_from:prov-id")
+    check("note_origin present on every fragment (symmetric)",
+          all("note_origin" in r.metadata for r in result))
+
+    # ------------------------------------------------------------------
+    # Scenario 7: Merge after split — annotation must not be duplicated.
+    # Take the two split fragments from Scenario 6 (both have "Long outage")
+    # and let Seeq re-detect one continuous window. merged_from should contain
+    # "Long outage" exactly once.
+    # ------------------------------------------------------------------
+    print("\nScenario 7: Merge-after-split deduplication")
+    result = reconcile([prim6, sec6], [Window(start=_dt(8), end=_dt(12))])
+    check("Single capsule returned", len(result) == 1)
+    mf7 = result[0].metadata.get("merged_from", [])
+    long_outage_count = sum(1 for e in mf7 if e.get("annotation") == "Long outage")
+    check("'Long outage' appears exactly once in merged_from", long_outage_count == 1)
+
+    # ------------------------------------------------------------------
+    # Scenario 8: Divergence after split — fragments are independent objects;
+    # editing one must not affect the other. Simulates what a real edit path
+    # would do: update annotation, clear note_origin (note is now original to
+    # this fragment). After divergence, a subsequent merge must preserve both
+    # distinct annotations since they no longer match.
+    # ------------------------------------------------------------------
+    print("\nScenario 8: Divergence after split (edit-clears-marker)")
+    # Start from the Scenario 6 split results (re-run to get fresh objects).
+    result6 = reconcile([cap_prov], [win_small, win_large])
+    frag_p = next(r for r in result6 if r.id == "prov-id")
+    frag_s = next(r for r in result6 if r.id != "prov-id")
+
+    # Simulate a user independently editing frag_s.
+    # A real edit path would do the same: overwrite annotation, clear note_origin.
+    frag_s.metadata = {"annotation": "Separate leak issue"}
+
+    check("Sibling (frag_p) annotation unchanged after edit",
+          frag_p.metadata.get("annotation") == "Long outage")
+    check("Sibling (frag_p) note_origin unchanged",
+          frag_p.metadata.get("note_origin") == "original")
+    check("Edited fragment has new annotation",
+          frag_s.metadata.get("annotation") == "Separate leak issue")
+    check("note_origin cleared by edit (note is now original to this fragment)",
+          "note_origin" not in frag_s.metadata)
+
+    # Merge the two diverged fragments: texts now differ, so both survive dedup.
+    result8 = reconcile([frag_p, frag_s], [Window(start=_dt(8), end=_dt(12))])
+    mf8 = result8[0].metadata.get("merged_from", [])
+    annotations8 = [e.get("annotation") for e in mf8]
+    check("Both diverged annotations survive merge (no dedup of distinct text)",
+          "Long outage" in annotations8 and "Separate leak issue" in annotations8)
 
     # ------------------------------------------------------------------
     # Summary
