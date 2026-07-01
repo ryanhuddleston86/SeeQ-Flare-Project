@@ -15,6 +15,11 @@ Judgment calls recorded here:
       note_origin="split_from:<uuid>"   → fragment(s) receiving a copy
     A user edit to a fragment should clear note_origin; the note then becomes
     original to that fragment. This spike simulates edits via direct mutation.
+  JC3 (archive): Option B — reconcile() archives capsules with no incoming overlap
+    instead of dropping them. Archive is a preservation path: metadata survives
+    intact; bookkeeping (archived_reason, archived_at) lives on ArchivedCapsule,
+    not inside capsule.metadata, so the capsule's own record is not polluted.
+    Reanimation is caller-driven: reconcile() has no awareness of the archive store.
 """
 
 from __future__ import annotations
@@ -45,6 +50,31 @@ class Window:
     """Incoming Seeq-detected time window — no identity yet."""
     start: datetime
     end: datetime
+
+
+@dataclass
+class ArchivedCapsule:
+    """
+    A capsule that had no overlapping window in the latest Seeq pull.
+
+    The original capsule is preserved exactly as it was — id, start, end,
+    metadata (annotation, note_origin, etc.) all intact. Archive bookkeeping
+    lives here, not in capsule.metadata, so the capsule's own record is not
+    polluted by structural event markers.
+    """
+    capsule: Capsule
+    archived_reason: str   # "no_overlap" — had no matching incoming window this run
+    archived_at: datetime  # timestamp of the reconcile run that archived it
+
+
+@dataclass
+class ReconcileResult:
+    """
+    Return type for reconcile(). Both lists must be handled by the caller —
+    ignoring archived means accepting the silent-drop bug at one layer up.
+    """
+    reconciled: list[Capsule]
+    archived: list[ArchivedCapsule]
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +173,11 @@ def _build_merged_from(caps: list[Capsule]) -> list[dict[str, Any]]:
 # Public API
 # ---------------------------------------------------------------------------
 
-def reconcile(existing: list[Capsule], incoming: list[Window]) -> list[Capsule]:
+def reconcile(
+    existing: list[Capsule],
+    incoming: list[Window],
+    run_at: datetime,
+) -> ReconcileResult:
     """
     Reconcile incoming Seeq windows against stored capsules by temporal overlap.
 
@@ -161,22 +195,43 @@ def reconcile(existing: list[Capsule], incoming: list[Window]) -> list[Capsule]:
                                  split_warning=True on all (JC2=A)
       M existing, N incoming  → complex merge+split: merge logic for anchor,
                                  split logic for fragments, complex_warning=True
-      existing with no incoming overlap → silently dropped (Seeq removed it)
+      existing with no incoming overlap → archived (JC3): full capsule preserved
+                                 in ReconcileResult.archived with archived_reason
+                                 and archived_at; NOT in ReconcileResult.reconciled
+
+    run_at must be supplied by the caller (not generated internally) so that
+    archived_at is deterministic and testable.
     """
+    # TODO: reconcile() intentionally has no awareness of archived capsules.
+    # Callers MUST check archived output before treating a reappearing window
+    # as brand-new, or this silently reintroduces the drop bug one layer up.
+    # Option B (caller-driven reanimation): if a subsequent Seeq pull produces
+    # a window that overlaps a previously archived capsule's time range, the
+    # caller is responsible for passing that ArchivedCapsule.capsule back into
+    # `existing`. reconcile() will then treat it as a normal drift/update and
+    # preserve the original ID and metadata.
+
     components = _find_components(existing, incoming)
-    result: list[Capsule] = []
+    reconciled: list[Capsule] = []
+    archived: list[ArchivedCapsule] = []
 
     for e_indices, i_indices in components:
         e_caps = [existing[i] for i in e_indices]
         i_wins = [incoming[i] for i in i_indices]
 
-        # Dropped by Seeq.
+        # No incoming overlap — archive rather than drop.
         if not i_wins:
+            for cap in e_caps:
+                archived.append(ArchivedCapsule(
+                    capsule=cap,
+                    archived_reason="no_overlap",
+                    archived_at=run_at,
+                ))
             continue
 
         # Brand-new window.
         if not e_caps:
-            result.append(Capsule(
+            reconciled.append(Capsule(
                 id=str(uuid.uuid4()),
                 start=i_wins[0].start,
                 end=i_wins[0].end,
@@ -201,7 +256,7 @@ def reconcile(existing: list[Capsule], incoming: list[Window]) -> list[Capsule]:
 
         if not is_split:
             # Drift or pure merge — one output capsule.
-            result.append(Capsule(
+            reconciled.append(Capsule(
                 id=anchor.id,
                 start=i_wins[0].start,
                 end=i_wins[0].end,
@@ -224,7 +279,7 @@ def reconcile(existing: list[Capsule], incoming: list[Window]) -> list[Capsule]:
             # (symmetric) so downstream can filter on the field without silently
             # missing the primary fragment. A user edit to any fragment should clear
             # note_origin — the note then becomes original to that fragment.
-            result.append(Capsule(
+            reconciled.append(Capsule(
                 id=anchor.id,
                 start=primary.start,
                 end=primary.end,
@@ -232,7 +287,7 @@ def reconcile(existing: list[Capsule], incoming: list[Window]) -> list[Capsule]:
                 created_at=anchor.created_at,
             ))
             for win in secondaries:
-                result.append(Capsule(
+                reconciled.append(Capsule(
                     id=str(uuid.uuid4()),
                     start=win.start,
                     end=win.end,
@@ -243,7 +298,7 @@ def reconcile(existing: list[Capsule], incoming: list[Window]) -> list[Capsule]:
                     },
                 ))
 
-    return result
+    return ReconcileResult(reconciled=reconciled, archived=archived)
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +308,10 @@ def reconcile(existing: list[Capsule], incoming: list[Window]) -> list[Capsule]:
 def _dt(hour: int, minute: int = 0) -> datetime:
     """Shorthand: fixed date at HH:MM UTC, for readable fixtures."""
     return datetime(2026, 1, 15, hour, minute, tzinfo=timezone.utc)
+
+
+# Fixed reconcile run timestamp used across all tests.
+RUN_AT = _dt(12)
 
 
 def _run_tests() -> None:
@@ -277,7 +336,7 @@ def _run_tests() -> None:
         id="drift-id", start=_dt(8), end=_dt(10),
         metadata={"annotation": "Analyzer offline"}, created_at=_dt(0),
     )
-    result = reconcile([cap], [Window(start=_dt(7, 58), end=_dt(10, 3))])
+    result = reconcile([cap], [Window(start=_dt(7, 58), end=_dt(10, 3))], run_at=RUN_AT).reconciled
     check("Single capsule returned", len(result) == 1)
     check("ID preserved", result[0].id == "drift-id")
     check("Bounds updated", result[0].start == _dt(7, 58) and result[0].end == _dt(10, 3))
@@ -297,7 +356,7 @@ def _run_tests() -> None:
         id="cap-b", start=_dt(10), end=_dt(12),
         metadata={"annotation": "Leak on sample line"}, created_at=_dt(1),
     )
-    result = reconcile([cap_a, cap_b], [Window(start=_dt(8), end=_dt(12))])
+    result = reconcile([cap_a, cap_b], [Window(start=_dt(8), end=_dt(12))], run_at=RUN_AT).reconciled
     check("Single capsule returned", len(result) == 1)
     check("Earliest ID survives (cap-a)", result[0].id == "cap-a")
     check("Bounds span full merge", result[0].start == _dt(8) and result[0].end == _dt(12))
@@ -322,7 +381,7 @@ def _run_tests() -> None:
     )
     win_small = Window(start=_dt(8), end=_dt(9))       # 1 h overlap with [08,12]
     win_large = Window(start=_dt(9, 30), end=_dt(12))  # 2.5 h overlap with [08,12]
-    result = reconcile([cap_orig], [win_small, win_large])
+    result = reconcile([cap_orig], [win_small, win_large], run_at=RUN_AT).reconciled
     check("Two capsules returned", len(result) == 2)
     check("Original ID present exactly once", sum(1 for r in result if r.id == "orig-id") == 1)
     primary = next(r for r in result if r.id == "orig-id")
@@ -340,7 +399,7 @@ def _run_tests() -> None:
 
     # ------------------------------------------------------------------
     # Scenario 4: Idempotency — two identical reconcile passes must not
-    # mint new IDs. Uses the drift capsule from Scenario 1.
+    # mint new IDs.
     # ------------------------------------------------------------------
     print("\nScenario 4: Idempotency")
     cap_idem = Capsule(
@@ -348,8 +407,8 @@ def _run_tests() -> None:
         metadata={"annotation": "Test"}, created_at=_dt(0),
     )
     same_win = Window(start=_dt(7, 58), end=_dt(10, 3))
-    r1 = reconcile([cap_idem], [same_win])
-    r2 = reconcile(r1, [same_win])
+    r1 = reconcile([cap_idem], [same_win], run_at=RUN_AT).reconciled
+    r2 = reconcile(r1, [same_win], run_at=RUN_AT).reconciled
     check("First pass: ID preserved", len(r1) == 1 and r1[0].id == "idem-id")
     check("Second pass: ID preserved", len(r2) == 1 and r2[0].id == "idem-id")
     check("Second pass: bounds unchanged",
@@ -359,7 +418,7 @@ def _run_tests() -> None:
     # Scenario 5: New capsule — no existing capsules at all.
     # ------------------------------------------------------------------
     print("\nScenario 5: New capsule (no existing overlap)")
-    result = reconcile([], [Window(start=_dt(14), end=_dt(16))])
+    result = reconcile([], [Window(start=_dt(14), end=_dt(16))], run_at=RUN_AT).reconciled
     check("One capsule minted", len(result) == 1)
     check("Has a UUID", bool(result[0].id))
     check("Empty metadata", result[0].metadata == {})
@@ -373,7 +432,7 @@ def _run_tests() -> None:
         id="prov-id", start=_dt(8), end=_dt(12),
         metadata={"annotation": "Long outage"}, created_at=_dt(0),
     )
-    result = reconcile([cap_prov], [win_small, win_large])
+    result = reconcile([cap_prov], [win_small, win_large], run_at=RUN_AT).reconciled
     prim6 = next(r for r in result if r.id == "prov-id")
     sec6  = next(r for r in result if r.id != "prov-id")
     check("Both fragments carry full annotation",
@@ -392,7 +451,7 @@ def _run_tests() -> None:
     # "Long outage" exactly once.
     # ------------------------------------------------------------------
     print("\nScenario 7: Merge-after-split deduplication")
-    result = reconcile([prim6, sec6], [Window(start=_dt(8), end=_dt(12))])
+    result = reconcile([prim6, sec6], [Window(start=_dt(8), end=_dt(12))], run_at=RUN_AT).reconciled
     check("Single capsule returned", len(result) == 1)
     mf7 = result[0].metadata.get("merged_from", [])
     long_outage_count = sum(1 for e in mf7 if e.get("annotation") == "Long outage")
@@ -406,8 +465,7 @@ def _run_tests() -> None:
     # distinct annotations since they no longer match.
     # ------------------------------------------------------------------
     print("\nScenario 8: Divergence after split (edit-clears-marker)")
-    # Start from the Scenario 6 split results (re-run to get fresh objects).
-    result6 = reconcile([cap_prov], [win_small, win_large])
+    result6 = reconcile([cap_prov], [win_small, win_large], run_at=RUN_AT).reconciled
     frag_p = next(r for r in result6 if r.id == "prov-id")
     frag_s = next(r for r in result6 if r.id != "prov-id")
 
@@ -424,12 +482,99 @@ def _run_tests() -> None:
     check("note_origin cleared by edit (note is now original to this fragment)",
           "note_origin" not in frag_s.metadata)
 
-    # Merge the two diverged fragments: texts now differ, so both survive dedup.
-    result8 = reconcile([frag_p, frag_s], [Window(start=_dt(8), end=_dt(12))])
+    result8 = reconcile([frag_p, frag_s], [Window(start=_dt(8), end=_dt(12))], run_at=RUN_AT).reconciled
     mf8 = result8[0].metadata.get("merged_from", [])
     annotations8 = [e.get("annotation") for e in mf8]
     check("Both diverged annotations survive merge (no dedup of distinct text)",
           "Long outage" in annotations8 and "Separate leak issue" in annotations8)
+
+    # ------------------------------------------------------------------
+    # Scenario 9: No-overlap archive — capsule with no incoming match goes to
+    # archived, not reconciled. archived_reason and archived_at must be set.
+    # A concurrent new window (different time range) still lands in reconciled.
+    # ------------------------------------------------------------------
+    print("\nScenario 9: No-overlap → archived with marker")
+    cap_drop = Capsule(
+        id="drop-id", start=_dt(8), end=_dt(10),
+        metadata={"annotation": "Will be archived"}, created_at=_dt(0),
+    )
+    r9 = reconcile(
+        [cap_drop],
+        [Window(start=_dt(14), end=_dt(16))],  # no overlap with [08,10]
+        run_at=RUN_AT,
+    )
+    check("Archived capsule absent from reconciled",
+          not any(c.id == "drop-id" for c in r9.reconciled))
+    check("Archived capsule present in archived", len(r9.archived) == 1)
+    check("archived_reason='no_overlap'",
+          r9.archived[0].archived_reason == "no_overlap")
+    check("archived_at matches run_at",
+          r9.archived[0].archived_at == RUN_AT)
+    check("Original capsule ID intact in archive",
+          r9.archived[0].capsule.id == "drop-id")
+    check("New window still minted in reconciled", len(r9.reconciled) == 1)
+
+    # ------------------------------------------------------------------
+    # Scenario 10: Note text survives archive intact.
+    # Capsule with annotation and note_origin — both must be present and
+    # unchanged on the archived entry. No incoming windows at all this run.
+    # ------------------------------------------------------------------
+    print("\nScenario 10: Note text and metadata survive archive intact")
+    cap_noted = Capsule(
+        id="noted-id", start=_dt(8), end=_dt(10),
+        metadata={"annotation": "Compressor fault", "note_origin": "original"},
+        created_at=_dt(0),
+    )
+    r10 = reconcile([cap_noted], [], run_at=RUN_AT)
+    check("Capsule archived (no incoming windows)", len(r10.archived) == 1)
+    check("annotation survives in archive",
+          r10.archived[0].capsule.metadata.get("annotation") == "Compressor fault")
+    check("note_origin survives in archive",
+          r10.archived[0].capsule.metadata.get("note_origin") == "original")
+    check("Metadata object matches original (not mutated)",
+          r10.archived[0].capsule.metadata == cap_noted.metadata)
+    check("Reconciled is empty", r10.reconciled == [])
+
+    # ------------------------------------------------------------------
+    # Scenario 11: Reappearance after archive (Option B — caller-driven).
+    #
+    # Design decision (JC3): reconcile() has no awareness of the archive store.
+    # If a window reappears that overlaps a previously archived capsule, the
+    # CALLER is responsible for detecting this and passing the archived capsule
+    # back into `existing`. reconcile() then treats it as a normal drift/update,
+    # preserving the original ID and metadata. If the caller skips this check
+    # and passes nothing into existing, a new UUID is minted — silently
+    # reintroducing the drop bug one layer up. This test demonstrates the
+    # correct (caller-checks-archive) path only; the incorrect path is not
+    # tested here but is documented in the TODO comment in reconcile().
+    # ------------------------------------------------------------------
+    print("\nScenario 11: Reappearance after archive (caller-driven reanimation)")
+    cap_return = Capsule(
+        id="return-id", start=_dt(8), end=_dt(10),
+        metadata={"annotation": "Intermittent fault"}, created_at=_dt(0),
+    )
+
+    # Pass 1: no incoming windows → capsule archived.
+    r11a = reconcile([cap_return], [], run_at=RUN_AT)
+    check("Pass 1: capsule archived",
+          len(r11a.archived) == 1 and r11a.archived[0].capsule.id == "return-id")
+    check("Pass 1: reconciled is empty", r11a.reconciled == [])
+
+    # Pass 2: caller notices a new window overlapping the archived time range,
+    # looks up the archive, and passes the original capsule back into existing.
+    reanimated = r11a.archived[0].capsule
+    r11b = reconcile(
+        [reanimated],
+        [Window(start=_dt(8), end=_dt(10, 30))],
+        run_at=_dt(13),
+    )
+    check("Pass 2: original ID preserved (not a new mint)",
+          len(r11b.reconciled) == 1 and r11b.reconciled[0].id == "return-id")
+    check("Pass 2: bounds updated to new window",
+          r11b.reconciled[0].end == _dt(10, 30))
+    check("Pass 2: annotation preserved through archive and back",
+          r11b.reconciled[0].metadata.get("annotation") == "Intermittent fault")
+    check("Pass 2: nothing re-archived", r11b.archived == [])
 
     # ------------------------------------------------------------------
     # Summary
