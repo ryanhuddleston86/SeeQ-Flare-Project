@@ -32,16 +32,18 @@ One module at a time. Tests green before moving to the next. Log the stopping po
 
 ## Rules module
 
-Fetch 40 CFR 60.13(h)(2) verbatim from eCFR before implementing any branch.
-Paste the text into each branch docstring — then **pause for Ryan to review** before writing the branch logic.
-Each `[VERIFY]` marker in the spec is a hard stop: paste text, re-derive vectors, reconcile before coding.
+Verbatim source: `docs/14_CFR_60_13_h2_Verbatim.md` (source-verified from
+eCFR 2026-07-01; section unchanged since 1/03/2017). Branch verdicts
+implemented 2026-07-02; precedence confirmed, no longer provisional for
+(i)–(iv). G4/G9/G10 vectors re-derived from the verbatim text — one spec
+arithmetic slip corrected (G4 second-window span is 60 min via the
+separation test, not 25; verdict unchanged).
 
-**BLOCKED 2026-07-02:** this environment's network policy denies
-`www.ecfr.gov` (proxy CONNECT 403). `rules.py` exists as a routing skeleton —
-branch verdicts raise `NotImplementedError` until the verbatim text arrives
-(policy allowlist change, or Ryan pastes the text into the session). Branch
-precedence in the skeleton is provisional and still `[VERIFY]` vs. the
-(h)(2) chapeau.
+- (iii)(A) canonical statement is the literal two-point-separation test;
+  `max(V)−min(V) ≥ 15 min` is the documented implementation form (dense-
+  sampling equivalence, docs/14). Boundary vector pinned in tests.
+- Provisions (v)–(viii) are informational, OUT OF SCOPE for rules.py —
+  (vi)/(vii) likely EMP/PI averaging territory (see docs/14 before assuming).
 
 ## Domain facts — lube flare (from `docs/13_LubeFlare_Seeq_Condition_Notes.md`)
 

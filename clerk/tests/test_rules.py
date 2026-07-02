@@ -1,10 +1,11 @@
 """
-Rule engine skeleton tests — routing + the SeeqCovered gate ONLY.
+Rule engine tests — verdicts implemented from docs/14_CFR_60_13_h2_Verbatim.md
+(source-verified eCFR text). Branch verdicts unfrozen 2026-07-02.
 
-Branch VERDICTS are stubbed pending verbatim 40 CFR 60.13(h)(2) review
-(fetch currently blocked by network policy). These tests prove the routing
-and the coverage gate without implementing any regulatory logic: a stub
-raising NotImplementedError with the branch name IS the routing assertion.
+G4/G9/G10 vectors are RE-DERIVED from the verbatim text below, not carried
+from the spec's paraphrase. One spec arithmetic slip found and corrected in
+place (see test_g4_second_window_alone — the verdict stands, the stated span
+number was wrong).
 """
 from datetime import datetime, timedelta, timezone
 
@@ -16,57 +17,29 @@ from clerk.schemas import CellValid
 HOUR = datetime(2026, 2, 3, 9, 0, tzinfo=timezone.utc)
 
 
+def _m(minutes: float) -> datetime:
+    return HOUR + timedelta(minutes=minutes)
+
+
 def _ctx(**kw):
     defaults = dict(
         analyzer="CEMS-001",
         hour_start=HOUR,
         seeq_covered=False,
-        operating=[(HOUR, HOUR + timedelta(hours=1))],  # full-hour operating
+        operating=[(_m(0), _m(60))],  # full-hour operating
     )
     defaults.update(kw)
     return HourContext(**defaults)
 
 
 # ---------------------------------------------------------------------------
-# The new coverage behavior (Ryan, 2026-07-02)
+# SeeqCovered gate + NOT-ASSESSED (Ryan, 2026-07-02) — unchanged behavior
 # ---------------------------------------------------------------------------
 
 def test_uncovered_normal_hour_is_not_assessed():
-    """SeeqCovered=false, unit operating, no manual/QA window → NOT-ASSESSED."""
     verdict, rule = evaluate_hour(_ctx(seeq_covered=False))
     assert verdict is CellValid.not_assessed
     assert rule == "not-assessed:no-seeq-coverage"
-
-
-def test_covered_normal_hour_routes_to_branch_5():
-    """Same hour with coverage → branch (i)/(ii); its verdict is stubbed
-    pending verbatim review, and the stub firing proves the routing."""
-    with pytest.raises(NotImplementedError, match=r"\(i\)/\(ii\)"):
-        evaluate_hour(_ctx(seeq_covered=True))
-
-
-def test_manual_window_fires_branch_4_regardless_of_coverage():
-    """SeeqCovered=false + a manual entry covering the hour → branch (iii)(A)
-    claims it; coverage is irrelevant to branches 2-4. The stub firing (rather
-    than NOT-ASSESSED being returned) proves the gate does not shadow them."""
-    ctx = _ctx(seeq_covered=False,
-               manual_qa_windows=[(HOUR, HOUR + timedelta(hours=1))])
-    with pytest.raises(NotImplementedError, match=r"\(iii\)\(A\)"):
-        evaluate_hour(ctx)
-
-
-def test_failed_cal_fires_branch_2_regardless_of_coverage():
-    ctx = _ctx(seeq_covered=False, failed_cal_at=HOUR + timedelta(minutes=5))
-    with pytest.raises(NotImplementedError, match=r"\(iv\)"):
-        evaluate_hour(ctx)
-
-
-def test_single_quadrant_fires_branch_3_regardless_of_coverage():
-    ctx = _ctx(seeq_covered=False,
-               operating=[(HOUR + timedelta(minutes=50),
-                           HOUR + timedelta(minutes=58))])
-    with pytest.raises(NotImplementedError, match=r"\(iii\)\(B\)"):
-        evaluate_hour(ctx)
 
 
 def test_not_operating_hour_needs_no_coverage_and_no_regulation():
@@ -75,22 +48,202 @@ def test_not_operating_hour_needs_no_coverage_and_no_regulation():
     assert rule == "not-operating"
 
 
-@pytest.mark.skip(reason="branch (iii)(A) verdict awaits verbatim 40 CFR "
-                         "60.13(h)(2) text + Ryan's vector review (eCFR fetch "
-                         "blocked by network policy)")
-def test_manual_window_hour_verdict_under_iii_a():
-    """Vector held for the review package: invalid :00-:20 in an otherwise
-    clean operating hour → V spans :20-:60 = 40 min ≥ 15 → valid, coverage
-    irrelevant. DO NOT enable until the pasted text confirms the vector."""
-    ctx = _ctx(seeq_covered=False,
-               manual_qa_windows=[(HOUR, HOUR + timedelta(minutes=20))])
-    verdict, rule = evaluate_hour(ctx)
-    assert verdict is CellValid.valid
-    assert "iii" in rule
+def test_manual_window_fires_iii_a_regardless_of_coverage():
+    """Full-hour manual window, uncovered analyzer → (iii)(A) claims the hour
+    and its verdict is invalid (V is empty) — never NOT-ASSESSED."""
+    verdict, rule = evaluate_hour(
+        _ctx(seeq_covered=False, manual_qa_windows=[(_m(0), _m(60))]))
+    assert (verdict, rule) == (CellValid.invalid, "(iii)(A)")
 
 
 # ---------------------------------------------------------------------------
-# Quadrant arithmetic (not regulatory — pure interval math)
+# Branch (i)/(ii) — normal hour (covered analyzers only)
+# ---------------------------------------------------------------------------
+
+def test_clean_full_hour_is_valid_under_i():
+    verdict, rule = evaluate_hour(_ctx(seeq_covered=True))
+    assert (verdict, rule) == (CellValid.valid, "(i)")
+
+
+def test_detected_window_consuming_a_quadrant_invalidates_under_i():
+    """Q1 fully consumed by a detection window → some operated quadrant has
+    no valid data point → invalid."""
+    verdict, rule = evaluate_hour(
+        _ctx(seeq_covered=True, detected_invalid_windows=[(_m(0), _m(20))]))
+    assert (verdict, rule) == (CellValid.invalid, "(i)")
+
+
+def test_partial_hour_valid_when_every_operated_quadrant_has_valid_time():
+    """Operates Q2+Q3 only, clean → (ii) valid."""
+    verdict, rule = evaluate_hour(
+        _ctx(seeq_covered=True, operating=[(_m(20), _m(55))]))
+    assert (verdict, rule) == (CellValid.valid, "(ii)")
+
+
+def test_partial_hour_invalid_when_an_operated_quadrant_is_consumed():
+    verdict, rule = evaluate_hour(
+        _ctx(seeq_covered=True, operating=[(_m(20), _m(55))],
+             detected_invalid_windows=[(_m(45), _m(60))]))
+    assert (verdict, rule) == (CellValid.invalid, "(ii)")
+
+
+# ---------------------------------------------------------------------------
+# Branch (iii)(B) — single-quadrant hour
+# ---------------------------------------------------------------------------
+
+def test_single_quadrant_with_any_valid_instant_is_valid():
+    verdict, rule = evaluate_hour(
+        _ctx(operating=[(_m(50), _m(58))]))
+    assert (verdict, rule) == (CellValid.valid, "(iii)(B)")
+
+
+def test_single_quadrant_fully_invalid_is_invalid():
+    verdict, rule = evaluate_hour(
+        _ctx(operating=[(_m(50), _m(58))],
+             detected_invalid_windows=[(_m(50), _m(58))]))
+    assert (verdict, rule) == (CellValid.invalid, "(iii)(B)")
+
+
+# ---------------------------------------------------------------------------
+# G4 — (iii)(A) composition across windows + branch selection changes answer
+# Vectors re-derived from the verbatim two-point-separation test.
+# ---------------------------------------------------------------------------
+
+def test_g4_first_window_alone_valid():
+    """Manual :00–:20 alone: V = :20–:60, span 40 ≥ 15 → valid. Matches spec."""
+    verdict, rule = evaluate_hour(_ctx(manual_qa_windows=[(_m(0), _m(20))]))
+    assert (verdict, rule) == (CellValid.valid, "(iii)(A)")
+
+
+def test_g4_second_window_alone_valid():
+    """Manual :12–:35 alone: V = :00–:12 ∪ :35–:60. VECTOR CORRECTION: the
+    spec said "V spans 25 min" — under the verbatim test the separation is
+    between points at :00 and :60, i.e. span(V) = 60 min (the spec's 25 was
+    the longest contiguous block, which the rule does not ask for). Verdict
+    unchanged: valid either way."""
+    verdict, rule = evaluate_hour(_ctx(manual_qa_windows=[(_m(12), _m(35))]))
+    assert (verdict, rule) == (CellValid.valid, "(iii)(A)")
+
+
+def test_g4_union_valid_under_iii_a():
+    """Both windows: V = :35–:60 → span 25 ≥ 15 → valid. Matches spec."""
+    verdict, rule = evaluate_hour(
+        _ctx(manual_qa_windows=[(_m(0), _m(20)), (_m(12), _m(35))]))
+    assert (verdict, rule) == (CellValid.valid, "(iii)(A)")
+
+
+def test_g4_same_union_invalid_under_normal_branch():
+    """The same invalid union arriving as DETECTION windows (no maintenance
+    hour → normal branch): Q1 fully consumed → invalid. Branch selection
+    changes the answer and the engine honors it. Matches spec."""
+    verdict, rule = evaluate_hour(
+        _ctx(seeq_covered=True,
+             detected_invalid_windows=[(_m(0), _m(20)), (_m(12), _m(35))]))
+    assert (verdict, rule) == (CellValid.invalid, "(i)")
+
+
+# ---------------------------------------------------------------------------
+# G9 — (iii)(A) boundaries. Re-derived: "separated by AT LEAST 15 minutes"
+# makes exactly-15 valid; 14 fails. Confirmed as spec stated.
+# ---------------------------------------------------------------------------
+
+def test_g9_span_exactly_15_is_valid():
+    verdict, rule = evaluate_hour(_ctx(manual_qa_windows=[(_m(0), _m(45))]))
+    assert (verdict, rule) == (CellValid.valid, "(iii)(A)")
+
+
+def test_g9_span_14_is_invalid():
+    verdict, rule = evaluate_hour(_ctx(manual_qa_windows=[(_m(0), _m(46))]))
+    assert (verdict, rule) == (CellValid.invalid, "(iii)(A)")
+
+
+def test_g9_fail_case_two_windows_leave_10_min():
+    """Invalid :00–:25 and :35–:60 → V = :25–:35 → span 10 → invalid. Confirmed."""
+    verdict, rule = evaluate_hour(
+        _ctx(manual_qa_windows=[(_m(0), _m(25)), (_m(35), _m(60))]))
+    assert (verdict, rule) == (CellValid.invalid, "(iii)(A)")
+
+
+# ---------------------------------------------------------------------------
+# G10 — (iv). Re-derived from "unless a subsequent calibration error test is
+# passed in the same hour and the requirements of (h)(2)(iii) are met, based
+# solely on valid data recorded after the successful calibration". Confirmed.
+# ---------------------------------------------------------------------------
+
+def test_g10_fail_then_pass_with_sufficient_post_cal_data_is_valid():
+    """Fail :05, pass :30, valid :30–:60 → (iii)(A) on post-cal V: span 30 → valid."""
+    verdict, rule = evaluate_hour(
+        _ctx(failed_cal_at=_m(5), passing_cal_at=_m(30)))
+    assert (verdict, rule) == (CellValid.valid, "(iv)")
+
+
+def test_g10_fail_with_no_in_hour_pass_is_invalid_regardless_of_data():
+    verdict, rule = evaluate_hour(_ctx(failed_cal_at=_m(5)))
+    assert (verdict, rule) == (CellValid.invalid, "(iv)")
+
+
+def test_g10_pass_too_late_for_15_min_separation_is_invalid():
+    """Pass at :50 → post-cal V = :50–:60 → span 10 < 15 → invalid."""
+    verdict, rule = evaluate_hour(
+        _ctx(failed_cal_at=_m(5), passing_cal_at=_m(50)))
+    assert (verdict, rule) == (CellValid.invalid, "(iv)")
+
+
+def test_g10_pass_must_be_after_the_fail():
+    """A passing cal EARLIER in the hour than the fail is not 'subsequent'."""
+    verdict, rule = evaluate_hour(
+        _ctx(failed_cal_at=_m(30), passing_cal_at=_m(5)))
+    assert (verdict, rule) == (CellValid.invalid, "(iv)")
+
+
+def test_g10_single_quadrant_hour_uses_iii_b_requirement_post_cal():
+    """(iv)'s exception applies (h)(2)(iii) — for a one-quadrant hour that is
+    (iii)(B): any valid instant after the pass suffices."""
+    verdict, rule = evaluate_hour(
+        _ctx(operating=[(_m(45), _m(60))],
+             failed_cal_at=_m(46), passing_cal_at=_m(50)))
+    assert (verdict, rule) == (CellValid.valid, "(iv)")
+
+
+def test_g10_post_cal_data_also_subtracts_other_invalid_windows():
+    """'based solely on VALID data recorded after' — a detection window after
+    the passing cal still subtracts: pass :30 but :30–:50 detected-invalid →
+    post-cal V = :50–:60 → span 10 → invalid."""
+    verdict, rule = evaluate_hour(
+        _ctx(failed_cal_at=_m(5), passing_cal_at=_m(30),
+             detected_invalid_windows=[(_m(30), _m(50))]))
+    assert (verdict, rule) == (CellValid.invalid, "(iv)")
+
+
+# ---------------------------------------------------------------------------
+# The (iii)(A) literal-vs-interval-algebra boundary (docs/14 equivalence note)
+# ---------------------------------------------------------------------------
+
+def test_iii_a_two_points_seconds_apart_across_quadrants_is_invalid():
+    """The false-valid edge the verbatim text kills: valid data only from
+    :14:30 to :15:30 — points exist in two different quadrants but the
+    maximum separation is 1 minute. A quadrant-membership reading would
+    validate this hour; the separation test correctly does not."""
+    verdict, rule = evaluate_hour(
+        _ctx(manual_qa_windows=[(_m(0), _m(14.5)), (_m(15.5), _m(60))]))
+    assert (verdict, rule) == (CellValid.invalid, "(iii)(A)")
+
+
+def test_iii_a_dense_sampling_assumption_boundary():
+    """Where the interval-algebra form could diverge from the literal test:
+    V = two 30-second slivers at the hour's extremes. span(V) = 59.5 min →
+    the implemented form says VALID. The literal test needs actual data
+    points inside those slivers — with a sampling interval wider than 30 s
+    no such points may exist. This test PINS the implemented (dense-sampling)
+    behavior as the documented, deliberate choice per docs/14; if sampling
+    cadence ever becomes an input, revisit this vector."""
+    verdict, rule = evaluate_hour(
+        _ctx(manual_qa_windows=[(_m(0.5), _m(59.5))]))
+    assert (verdict, rule) == (CellValid.valid, "(iii)(A)")
+
+
+# ---------------------------------------------------------------------------
+# Quadrant arithmetic (pure interval math)
 # ---------------------------------------------------------------------------
 
 def test_quadrants_full_hour():
@@ -98,13 +251,10 @@ def test_quadrants_full_hour():
 
 
 def test_quadrants_single():
-    ctx = _ctx(operating=[(HOUR + timedelta(minutes=16),
-                           HOUR + timedelta(minutes=29))])
+    ctx = _ctx(operating=[(_m(16), _m(29))])
     assert quadrants_operated(ctx) == {1}
 
 
 def test_quadrants_boundary_touch_is_not_occupancy():
-    """An interval ending exactly at a quadrant boundary does not occupy the
-    next quadrant (zero-width overlap)."""
-    ctx = _ctx(operating=[(HOUR, HOUR + timedelta(minutes=15))])
+    ctx = _ctx(operating=[(_m(0), _m(15))])
     assert quadrants_operated(ctx) == {0}
