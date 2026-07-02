@@ -286,6 +286,48 @@ def test_tech_entry_window_triggers_iii_a_regardless_of_coverage():
     assert cells[0].ContributingEventIDs == ["E1"]
 
 
+def test_tech_entry_branch_4_eligibility_is_status_independent():
+    """Guarantee A's status-independence principle (proven for union-
+    contribution) must carry over to branch selection identically: branch 4
+    eligibility depends ONLY on origin type (TechEntry), never on status.
+    Two TechEntry-origin observations, identical extent, one Needs review
+    and one Confirmed, on an uncovered analyzer — both must select branch 4
+    and produce the SAME Valid verdict; neither may reach NOT-ASSESSED.
+    (SeeqCovered is irrelevant here: branch 4 evaluates purely against V,
+    which a TechEntry-origin observation populates on its own — it never
+    needs Seeq's quadrant signal.)"""
+    hour = _utc(2026, 4, 1, 8, 0)
+    hour_end = hour + timedelta(hours=1)
+    # Partial window so the verdict itself (not just RuleApplied) is a
+    # meaningful check: V = :20-:60 = 40 min >= 15 -> valid under (iii)(A).
+    needs_review = _event("E1", EventType.TechEntry, None, hour, hour + timedelta(minutes=20),
+                          "A1", hour, detection_class="")
+
+    def _confirmed_via_corrective_action(id, analyzer):
+        return Event(
+            EventID=id, EventType=EventType.TechEntry, TargetEventID=None,
+            ExtentStartUTC=hour, ExtentEndUTC=hour + timedelta(minutes=20),
+            AnalyzerCEMIDs=[analyzer], Category="", ReasonCode="", Actor="tech",
+            ActedAt=hour, Reason="", CorrectiveAction="fixed on site", DetectionClass="",
+        )
+
+    events = [needs_review, _confirmed_via_corrective_action("E2", "A2")]
+    cells = build_grid(
+        events=events, capsules=[],
+        operating_windows=[OperatingWindow("U1", hour, hour_end),
+                           OperatingWindow("U2", hour, hour_end)],
+        analyzer_units=[AnalyzerUnit("A1", "U1", SeeqCovered=False),
+                        AnalyzerUnit("A2", "U2", SeeqCovered=False)],
+        qa_windows=[], config=_config(),
+        window_start=hour, window_end=hour_end,
+    )
+    by_analyzer = {c.Analyzer: c for c in cells}
+    assert by_analyzer["A1"].RuleApplied == "(iii)(A)"
+    assert by_analyzer["A2"].RuleApplied == "(iii)(A)"
+    assert by_analyzer["A1"].Valid == by_analyzer["A2"].Valid == CellValid.valid
+    assert CellValid.not_assessed not in (by_analyzer["A1"].Valid, by_analyzer["A2"].Valid)
+
+
 def test_seeq_detection_window_does_not_trigger_iii_a_routes_to_normal():
     """A detected (not manual) invalid window doesn't trigger branch 4 — it
     subtracts from V in the normal branch instead."""

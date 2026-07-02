@@ -75,6 +75,30 @@ One module at a time. Tests green before moving to the next. Log the stopping po
   a lightweight regression check that this input set stays loadable — not
   a re-validation of the output content, which was hand-reviewed once.
 
+### Reported branch-4/status-independence bug (Ryan, 2026-07-02) — investigated, not reproduced
+
+- Reported as: TechEntry-origin observation branch-4 ((iii)(A)) eligibility
+  incorrectly depending on Status (Confirmed vs Needs review), separate
+  from the Confirmed-but-uncovered-analyzer hard stop above.
+- Traced `grid.py`'s full path end to end (`_contributing` →
+  `_manual_and_detected_windows` → `HourContext.manual_qa_windows` →
+  `rules.evaluate_hour`) and tested four scenarios directly: different
+  analyzers, same analyzer with two origins, an explicit `Confirmation`
+  event (not just the corrective-action guess), and a partial window where
+  the VERDICT itself (not just the branch label) could plausibly diverge.
+  **All four produced identical, correct, status-independent results** —
+  `_EXCLUDED_STATUSES` (Dismissed/Withdrawn/Superseded only) is the only
+  status check anywhere in the branch-4 path; Confirmed and Needs review
+  are already treated identically.
+- Added the required test anyway
+  (`test_tech_entry_branch_4_eligibility_is_status_independent`,
+  test_grid.py) as a regression lock, same shape as the Guarantee A test —
+  it passes against the current code without any production change.
+- Not marked resolved as "fixed" — flagging that this couldn't be
+  reproduced in case the report was based on a different code path, an
+  earlier state, or a scenario not yet tried, rather than silently
+  assuming the report was mistaken.
+
 ## Hard stops (§5) — surface to Ryan and wait
 
 - Any conflict between pasted eCFR verbatim text and spec paraphrase
