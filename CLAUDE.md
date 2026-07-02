@@ -30,6 +30,37 @@ One module at a time. Tests green before moving to the next. Log the stopping po
   denominator is undecided — flag and wait for Ryan; nothing downstream may
   interpret the state.
 
+## Fold module (Ryan, 2026-07-02)
+
+- EventType grew four machine-authored values past spec Step 2's original
+  text: `BoundaryUpdate`, `Withdrawn`, `Superseded`, `DismissalRejected`.
+  Effects: `Confirmation`/`DismissalProposed`/`DismissalRejected`/`Reopen`/
+  `Withdrawn`/`Superseded` each set a fixed status; `Approval` sets
+  Dismissed and records **its own stated extent** as
+  `signed_dismissal_extent` (ledger 17 — never the target's current
+  extent); `BoundaryUpdate`/`Correction` update current extent only,
+  status unchanged.
+- **Grouping is flat:** `TargetEventID` always references the observation's
+  ORIGIN EventID directly, never a chain — even for events that
+  conceptually respond to an intermediate event (e.g. `Approval` targets
+  origin, not the `DismissalProposed`). No chain-walking in fold.py.
+- **Two governing principles:** (1) fold does not re-validate upstream
+  business rules — replay honestly, trust the stream; a rule like
+  "confirmed tickets never withdraw" is delta.py's job to enforce on
+  write, not fold's to re-check. (2) Status never gates whether an
+  observation's extent counts as invalid time downstream (Guarantee A) —
+  fold returns every observation regardless of status; filtering is
+  grid.py's job (Step 4). No "only Confirmed counts" filter anywhere.
+- Reductive Corrections are folded without judgment — no gating/classifying
+  in fold.py. The unapproved-flip safety check lives in diff.py (Step 7).
+- **Flagged, not blocking:** TechEntry's initial status while
+  `CorrectiveAction` is blank is a guess (Needs review until corrective
+  action is present, then Confirmed) — low stakes since status never
+  touches grid math. Flag for Ryan if the real capture flow differs.
+- The spec lists `Corrected` as a possible status; no current event effect
+  reaches it (`Correction` explicitly leaves status unchanged) — kept in
+  the enum for spec fidelity, flagged as presently unreachable.
+
 ## Rules module
 
 Verbatim source: `docs/14_CFR_60_13_h2_Verbatim.md` (source-verified from

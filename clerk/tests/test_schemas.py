@@ -65,7 +65,7 @@ def test_detection_class_is_opaque_string(capsules):
 # ---------------------------------------------------------------------------
 
 def test_read_events_count(events):
-    assert len(events) == 9
+    assert len(events) == 17
 
 
 def test_read_events_types_correct(events):
