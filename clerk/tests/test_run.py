@@ -225,7 +225,7 @@ def test_new_events_include_born_and_withdrawn(synthetic_run):
 
 def test_output_label_not_set_for_synthetic_run(synthetic_run):
     result, _ = synthetic_run
-    assert not result.digest_text.startswith("<!--")
+    assert result.digest_text.startswith("# Clerk run")
 
 
 def test_run_creates_missing_out_dir(tmp_path):
@@ -251,6 +251,33 @@ def test_run_is_deterministic_across_two_invocations(tmp_path):
         (out_b / "adjudicated_condition.csv").read_bytes()
 
 
-def test_output_label_is_written_as_leading_marker(tmp_path):
+def test_output_label_is_written_as_visible_banner(tmp_path):
     result = run(FIXTURES, tmp_path, RUN_DATE, RUN_AT, output_label="TEST LABEL")
-    assert result.digest_text.startswith("<!-- TEST LABEL -->")
+    assert result.digest_text.startswith("# TEST LABEL")
+    assert "<!--" not in result.digest_text, \
+        "label must be visible, not hidden in an HTML comment"
+
+
+# ---------------------------------------------------------------------------
+# Real Lube Flare smoke-test fixture set (fixtures/real/smoke_test_provisional/)
+# — a lightweight regression check that this input set stays loadable and
+# run() doesn't crash against it. NOT a re-validation of its output content
+# (that's a one-off, hand-reviewed run — see the committed out/ directory
+# and the fixture set's own README.md for what's real vs. placeholder).
+# ---------------------------------------------------------------------------
+
+REAL_SMOKE_FIXTURES = FIXTURES / "real" / "smoke_test_provisional"
+
+
+def test_real_smoke_test_fixtures_still_run_without_error(tmp_path):
+    result = run(
+        REAL_SMOKE_FIXTURES, tmp_path,
+        run_date=date(2026, 6, 13),
+        run_at=datetime(2026, 6, 13, 6, 0, tzinfo=timezone.utc),
+        pull_window_night="2",
+        output_label="TEST — see fixture README before trusting this output",
+    )
+    assert result.diff_result.is_first_run is True
+    assert len(result.delta_result.new_events) == 7  # one per real capsule, all unticketed
+    assert (tmp_path / "grid.csv").exists()
+    assert result.digest_text.startswith("# TEST")

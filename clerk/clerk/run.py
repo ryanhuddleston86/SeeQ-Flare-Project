@@ -167,8 +167,9 @@ def run(
     id_prefix: str = "NEW",
     output_label: str = "",
 ) -> RunResult:
-    """The orchestrator. `output_label`, if set, is written as a leading
-    comment-style marker line in digest.md — used by the real-data smoke
+    """The orchestrator. `output_label`, if set, is written as a VISIBLE
+    leading heading + rule in digest.md (never an HTML comment — a label
+    nobody can see doesn't mark anything) — used by the real-data smoke
     test to mark itself provisional (never used for the synthetic run)."""
     # Step 1 — ingest + snapshot
     events = read_events(fixtures_dir / "events.csv")
@@ -212,7 +213,9 @@ def run(
                              config.LateXThresholdDays, config.SiteTimeZoneIANA, capsules)
     digest_text = render_digest(run_at, events, diff_result, delta_result, run_date)
     if output_label:
-        digest_text = f"<!-- {output_label} -->\n\n{digest_text}"
+        # VISIBLE banner, not an HTML comment — a label nobody can see
+        # defeats the purpose of marking output provisional.
+        digest_text = f"# {output_label}\n\n---\n\n{digest_text}"
     (out_dir / "digest.md").write_text(digest_text)
 
     return RunResult(cells, diff_result, delta_result, digest_text, out_dir)

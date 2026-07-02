@@ -42,6 +42,38 @@ One module at a time. Tests green before moving to the next. Log the stopping po
 - See the SeeqCovered/NOT-ASSESSED section below for the material finding
   this run surfaced (Confirmed-but-uncovered → NOT-ASSESSED) — a new hard
   stop, not fixed here.
+- `output_label`, when set, renders as a VISIBLE markdown heading + rule at
+  the top of `digest.md` — deliberately not an HTML comment. A label
+  nobody can see doesn't mark output as provisional.
+
+### Real-data stretch smoke test (2026-07-02, after synthetic went green)
+
+- Input set: `clerk/fixtures/real/smoke_test_provisional/` (own README.md
+  inside — full real/placeholder breakdown per file). Chose the drift pair's
+  **Night 2** (post-fix, 7 capsules) over `capsules_lubeflare_real.csv`,
+  since the latter is documented as containing the phantom Jun 8–9 capsule
+  and flagged "superseded as demo seed." `events.csv` is empty — no real
+  Events ledger exists yet for Lube Flare.
+- `operating.csv` is an explicit PLACEHOLDER per direction: `LUBE_FLARE`
+  continuously operating for exactly Night 2's pull window
+  (2026-06-08T04:57:13Z–2026-06-12T14:31:36Z), not sourced from any real
+  Seeq operating condition (none identified yet — docs/13's "still
+  missing" list).
+- Output: `clerk/out/2026-06-13-lubeflare-real-smoke-test-PROVISIONAL/`,
+  committed. `digest.md` carries the visible provisional banner described
+  above. First run (no real `prior_grid.csv` exists) — diff/digest
+  correctly render everything as new.
+- Result sanity: 7 real capsules → 20 invalid grid cells (their exact
+  hour-spans) + 301 valid cells inside the placeholder operating window;
+  18,111 NOT-OPERATING cells outside it (LookbackMonths=8, used verbatim,
+  same as the synthetic run — most of an 8-month window predates a
+  4.4-day placeholder operating window). `adjudicated_condition.csv` is
+  correctly empty (no Events to fold). Every invalid cell's
+  `ContributingEventIDs` is capsule-provenance-only (`CAP:...`) — no
+  tickets exist yet to tell an adjudication story.
+- `test_real_smoke_test_fixtures_still_run_without_error` (test_run.py) is
+  a lightweight regression check that this input set stays loadable — not
+  a re-validation of the output content, which was hand-reviewed once.
 
 ## Hard stops (§5) — surface to Ryan and wait
 

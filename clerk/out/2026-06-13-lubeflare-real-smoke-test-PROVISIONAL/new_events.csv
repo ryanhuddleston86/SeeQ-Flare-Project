@@ -1,0 +1,8 @@
+EventID,EventType,TargetEventID,ExtentStartUTC,ExtentEndUTC,AnalyzerCEMIDs,Category,ReasonCode,Actor,ActedAt,Reason,CorrectiveAction,DetectionClass
+NEW-0001,SeeqDetection,,2026-06-09T12:00:00+00:00,2026-06-09T17:00:00+00:00,LUBEFLR-H2S-PCT,,,clerk-delta,2026-06-13T06:00:00+00:00,born Needs review,,legacy-blended
+NEW-0002,SeeqDetection,,2026-06-10T13:00:00+00:00,2026-06-10T15:00:00+00:00,LUBEFLR-H2S-PCT,,,clerk-delta,2026-06-13T06:00:00+00:00,born Needs review,,legacy-blended
+NEW-0003,SeeqDetection,,2026-06-09T12:00:00+00:00,2026-06-09T17:00:00+00:00,LUBEFLR-H2S-PPM,,,clerk-delta,2026-06-13T06:00:00+00:00,born Needs review,,legacy-blended
+NEW-0004,SeeqDetection,,2026-06-10T13:00:00+00:00,2026-06-10T15:00:00+00:00,LUBEFLR-H2S-PPM,,,clerk-delta,2026-06-13T06:00:00+00:00,born Needs review,,legacy-blended
+NEW-0005,SeeqDetection,,2026-06-09T09:00:00+00:00,2026-06-09T12:00:00+00:00,LUBEFLR-NHV-BTU,,,clerk-delta,2026-06-13T06:00:00+00:00,born Needs review,,legacy-blended
+NEW-0006,SeeqDetection,,2026-06-09T13:00:00+00:00,2026-06-09T15:00:00+00:00,LUBEFLR-NHV-BTU,,,clerk-delta,2026-06-13T06:00:00+00:00,born Needs review,,legacy-blended
+NEW-0007,SeeqDetection,,2026-06-10T13:00:00+00:00,2026-06-10T14:00:00+00:00,LUBEFLR-NHV-BTU,,,clerk-delta,2026-06-13T06:00:00+00:00,born Needs review,,legacy-blended
