@@ -39,6 +39,16 @@ Each `[VERIFY]` marker in the spec is a hard stop: paste text, re-derive vectors
   fragments. The delta writer's merge path runs on night one, not as an edge case.
 - Real data (`clerk/fixtures/real/`) feeds the §6 smoke test only. Synthetic
   fixtures remain the test basis; never fit code to the real file's quirks.
+  Exception by Ryan's direction: the drift pair
+  (`capsules_lubeflare_drift_night{1,2}.csv` + `drift_pull_windows.csv`) is the
+  concrete integration test for withdrawal-window scoping.
+- **Pull-window scoping (spec open item 7, now concrete):** the delta writer
+  takes a pull window per run; Withdrawn may only be emitted for episodes fully
+  INSIDE that window. Absence outside the pulled range is not evidence.
+- **Abutting capsules: strict overlap = two tickets until Ryan rules
+  otherwise** — every abutment is flagged, never silently decided.
+- `capsules_lubeflare_real.csv` contains the phantom Jun 8–9 capsule
+  (pre-fix export) — superseded as demo seed; regenerate post-fix.
 
 ## Repository shape
 

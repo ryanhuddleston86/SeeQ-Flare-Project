@@ -17,6 +17,7 @@ from clerk.schemas import (
     read_events,
     read_grid,
     read_operating,
+    read_pull_windows,
     read_qa_windows,
     write_grid,
 )
@@ -301,6 +302,20 @@ def test_grid_write_creates_parent_dirs(tmp_path):
     deep = tmp_path / "out" / "2026-01-15" / "grid.csv"
     write_grid(deep, cells)
     assert deep.exists()
+
+
+# ---------------------------------------------------------------------------
+# Pull windows (spec open item 7 — withdrawal scoping input)
+# ---------------------------------------------------------------------------
+
+def test_read_pull_windows():
+    windows = read_pull_windows(FIXTURES / "pull_windows.csv")
+    assert len(windows) == 1
+    w = windows[0]
+    assert w.Night == "1"
+    assert w.PullStartUTC.tzinfo is not None
+    assert w.PullEndUTC.tzinfo is not None
+    assert w.PullStartUTC < w.PullEndUTC
 
 
 # ---------------------------------------------------------------------------

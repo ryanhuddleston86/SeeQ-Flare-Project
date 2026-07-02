@@ -120,6 +120,17 @@ class GridCell:
 
 
 @dataclass
+class PullWindow:
+    """The extent of tonight's spy.pull. Spec open item 7, made concrete by the
+    real-data drift pair: Withdrawn may only be emitted for episodes fully
+    INSIDE this window — absence of a capsule outside the pulled range is not
+    evidence of anything."""
+    Night: str
+    PullStartUTC: datetime
+    PullEndUTC: datetime
+
+
+@dataclass
 class SiteConfig:
     SiteTimeZoneIANA: str
     LookbackMonths: int
@@ -199,6 +210,18 @@ def read_qa_windows(path: Path) -> List[QAWindow]:
     return rows
 
 
+def read_pull_windows(path: Path) -> List[PullWindow]:
+    rows: List[PullWindow] = []
+    with open(path, newline="") as f:
+        for r in csv.DictReader(f):
+            rows.append(PullWindow(
+                Night=r["Night"],
+                PullStartUTC=_dt(r["PullStartUTC"]),
+                PullEndUTC=_dt(r["PullEndUTC"]),
+            ))
+    return rows
+
+
 def read_config(path: Path) -> SiteConfig:
     kv: Dict[str, str] = {}
     with open(path, newline="") as f:
@@ -216,6 +239,39 @@ def read_config(path: Path) -> SiteConfig:
         JitterToleranceMin=int(kv.get("JitterToleranceMin", "5")),
         PartialOperatingHourApplicability=partial,
     )
+
+
+# ---------------------------------------------------------------------------
+# Events CSV writer (delta writer output — new_events.csv)
+# ---------------------------------------------------------------------------
+
+_EVENT_HEADERS = [
+    "EventID", "EventType", "TargetEventID", "ExtentStartUTC", "ExtentEndUTC",
+    "AnalyzerCEMIDs", "Category", "ReasonCode", "Actor", "ActedAt", "Reason",
+    "CorrectiveAction",
+]
+
+
+def write_events(path: Path, events: List[Event]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=_EVENT_HEADERS)
+        w.writeheader()
+        for e in events:
+            w.writerow({
+                "EventID": e.EventID,
+                "EventType": e.EventType.value,
+                "TargetEventID": e.TargetEventID or "",
+                "ExtentStartUTC": e.ExtentStartUTC.isoformat() if e.ExtentStartUTC else "",
+                "ExtentEndUTC": e.ExtentEndUTC.isoformat() if e.ExtentEndUTC else "",
+                "AnalyzerCEMIDs": ";".join(e.AnalyzerCEMIDs),
+                "Category": e.Category,
+                "ReasonCode": e.ReasonCode,
+                "Actor": e.Actor,
+                "ActedAt": e.ActedAt.isoformat(),
+                "Reason": e.Reason,
+                "CorrectiveAction": e.CorrectiveAction,
+            })
 
 
 # ---------------------------------------------------------------------------
