@@ -1,7 +1,7 @@
 EventID,EventType,TargetEventID,ExtentStartUTC,ExtentEndUTC,AnalyzerCEMIDs,Category,ReasonCode,Actor,ActedAt,Reason,CorrectiveAction,DetectionClass
 E001,SeeqDetection,,2026-01-15T14:00:00Z,2026-01-15T18:00:00Z,CEMS-001,,,seeq-auto,2026-01-15T14:05:00Z,Automated detection,,status-offline
 E002,Confirmation,E001,2026-01-15T14:00:00Z,2026-01-15T18:00:00Z,CEMS-001,confirmed,BKD,jsmith,2026-01-15T16:00:00Z,Equipment failure confirmed,Repaired at 18:00,
-E003,SeeqDetection,,2026-01-20T08:00:00Z,2026-01-20T12:00:00Z,CEMS-001,,,seeq-auto,2026-01-20T08:05:00Z,Automated detection,,status-offline
+E003,SeeqDetection,,2026-01-20T08:00:00Z,2026-01-20T12:00:00Z,CEMS-001,,,seeq-auto,2026-01-20T08:05:00Z,Automated detection,,failed-daily-validation
 E004,DismissalProposed,E003,2026-01-20T08:00:00Z,2026-01-20T12:00:00Z,CEMS-001,dismissal,,jdoe,2026-01-20T10:00:00Z,Instrument calibration in progress,,
 E005,Approval,E003,2026-01-20T08:00:00Z,2026-01-20T12:00:00Z,CEMS-001,dismissal,,supervisor,2026-01-20T11:00:00Z,Approved,,
 E006,TechEntry,,2026-01-22T00:00:00Z,2026-01-22T04:00:00Z,CEMS-002,tech,MAINT,techops,2026-01-22T00:30:00Z,Scheduled maintenance,Completed at 04:00,

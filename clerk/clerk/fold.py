@@ -35,6 +35,12 @@ shortened extent) is applied exactly like any other Correction, full stop.
 The unapproved-flip safety check lives in diff.py (Step 7, Decision 1 —
 "IsReduction classification by diffing goes away") — not here.
 
+`detection_class` on the output Observation is sourced from the ORIGIN
+event's `DetectionClass` column (nullable — blank on TechEntry origins,
+since that column is only ever populated on machine-authored events; see
+schemas.py). Added 2026-07-02 so grid.py can match a signed dismissal
+against a live capsule by analyzer+class, not analyzer alone.
+
 Analyzers on the output Observation are the ORIGIN event's AnalyzerCEMIDs
 only. A later event listing a broader/different CEMID set (e.g. a
 Correction naming an additional analyzer) does not widen it — spec Step
@@ -86,6 +92,7 @@ class Observation:
     extent_start_utc: datetime
     extent_end_utc: datetime
     signed_dismissal_extent: Optional[Tuple[datetime, datetime]]
+    detection_class: Optional[str]
     has_corrective_action: bool
     analyzers: List[str]
     latest_acted_at: datetime
@@ -165,6 +172,7 @@ def _replay(ordered: List[Event]) -> Observation:
         extent_start_utc=extent_start,
         extent_end_utc=extent_end,
         signed_dismissal_extent=signed_dismissal_extent,
+        detection_class=(origin.DetectionClass or "").strip() or None,
         has_corrective_action=has_corrective_action,
         analyzers=list(origin.AnalyzerCEMIDs),
         latest_acted_at=latest_acted_at,

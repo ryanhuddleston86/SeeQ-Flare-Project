@@ -38,13 +38,14 @@ def _utc(*a) -> datetime:
     return datetime(*a, tzinfo=timezone.utc)
 
 
-def _obs(origin_id, status, start, end, analyzer="A1", signed=None):
+def _obs(origin_id, status, start, end, analyzer="A1", signed=None, detection_class=None):
     return Observation(
         origin_event_id=origin_id,
         status=status,
         extent_start_utc=start,
         extent_end_utc=end,
         signed_dismissal_extent=signed,
+        detection_class=detection_class,
         has_corrective_action=False,
         analyzers=[analyzer],
         latest_acted_at=start,
@@ -111,8 +112,9 @@ def test_mixed_set_only_excluded_statuses_are_dropped():
 # Section B — signed-dismissal subtraction
 # ---------------------------------------------------------------------------
 
-def _seeq_obs(origin_id, status, start, end, signed=None):
-    return _obs(origin_id, status, start, end, analyzer="A1", signed=signed)
+def _seeq_obs(origin_id, status, start, end, signed=None, detection_class="status-offline"):
+    return _obs(origin_id, status, start, end, analyzer="A1", signed=signed,
+               detection_class=detection_class)
 
 
 def test_dismissal_subtracted_when_capsule_still_matches():
@@ -120,7 +122,7 @@ def test_dismissal_subtracted_when_capsule_still_matches():
     dismissed = _seeq_obs("E1", Status.dismissed, *signed, signed=signed)
     detected = {"A1": [signed]}
     origin_types = {"E1": EventType.SeeqDetection}
-    capsules = {"A1": [signed]}  # exact match
+    capsules = {("A1", "status-offline"): [signed]}  # exact match, same class
     out = apply_dismissal_subtraction(detected, [dismissed], origin_types, capsules, jitter_minutes=5)
     assert out["A1"] == []
 
@@ -143,7 +145,7 @@ def test_excess_beyond_signed_extent_stays_invalid():
     detected = {"A1": [wide_capsule]}
     origin_types = {"E1": EventType.SeeqDetection}
     out = apply_dismissal_subtraction(
-        detected, [dismissed], origin_types, {"A1": [wide_capsule]}, jitter_minutes=5)
+        detected, [dismissed], origin_types, {("A1", "status-offline"): [wide_capsule]}, jitter_minutes=5)
     assert out["A1"] == [
         (_utc(2026, 4, 1, 7, 0), _utc(2026, 4, 1, 8, 0)),
         (_utc(2026, 4, 1, 12, 0), _utc(2026, 4, 1, 13, 0)),
@@ -157,7 +159,7 @@ def test_near_touch_within_jitter_still_matches():
     detected = {"A1": [signed, near_capsule]}
     origin_types = {"E1": EventType.SeeqDetection}
     out = apply_dismissal_subtraction(
-        detected, [dismissed], origin_types, {"A1": [near_capsule]}, jitter_minutes=5)
+        detected, [dismissed], origin_types, {("A1", "status-offline"): [near_capsule]}, jitter_minutes=5)
     assert out["A1"] == [near_capsule]
 
 
@@ -172,9 +174,39 @@ def test_tech_entry_origin_dismissal_never_subtracts():
     detected = {"A1": [unrelated_capsule]}
     origin_types = {"E1": EventType.TechEntry}
     out = apply_dismissal_subtraction(
-        detected, [tech_dismissed], origin_types, {"A1": [unrelated_capsule]}, jitter_minutes=5)
+        detected, [tech_dismissed], origin_types,
+        {("A1", "status-offline"): [unrelated_capsule]}, jitter_minutes=5)
     assert out["A1"] == [unrelated_capsule], \
         "TechEntry-origin dismissal must not cancel unrelated detected time"
+
+
+def test_dismissal_does_not_cross_detection_classes():
+    """Extends test_tech_entry_origin_dismissal_never_subtracts (Ryan,
+    2026-07-02): two SeeqDetection observations, same analyzer, DIFFERENT
+    DetectionClass, overlapping windows — a dismissal signed against one
+    class must not subtract from the other class's live capsule, even
+    though analyzer-only matching would have wrongly allowed it."""
+    from clerk.grid import _manual_and_detected_windows
+
+    window = (_utc(2026, 4, 1, 8, 0), _utc(2026, 4, 1, 12, 0))
+    dismissed_offline = _seeq_obs("E1", Status.dismissed, *window, signed=window,
+                                  detection_class="status-offline")
+    live_validation = _seeq_obs("E2", Status.needs_review, *window,
+                                detection_class="failed-daily-validation")
+    origin_types = {"E1": EventType.SeeqDetection, "E2": EventType.SeeqDetection}
+
+    _manual, detected = _manual_and_detected_windows(
+        [dismissed_offline, live_validation], origin_types)
+    assert detected["A1"] == [window], \
+        "E1 is Dismissed and already excluded per Guarantee A — only E2's window remains"
+
+    # Only the OTHER class has a live capsule; the dismissed class has none.
+    capsules_by_class = {("A1", "failed-daily-validation"): [window]}
+    out = apply_dismissal_subtraction(
+        detected, [dismissed_offline, live_validation], origin_types,
+        capsules_by_class, jitter_minutes=5)
+    assert out["A1"] == [window], \
+        "a status-offline dismissal must not be corroborated by a failed-daily-validation capsule"
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +324,8 @@ def test_dismissal_cancels_detected_window_and_restores_valid():
     hour = _utc(2026, 4, 1, 8, 0)
     hour_end = hour + timedelta(hours=1)
     events = [
-        _event("E1", EventType.SeeqDetection, None, hour, hour_end, "A1", hour),
+        _event("E1", EventType.SeeqDetection, None, hour, hour_end, "A1", hour,
+              detection_class="status-offline"),
         _event("E2", EventType.DismissalProposed, "E1", hour, hour_end, "A1",
                hour + timedelta(minutes=10)),
         _event("E3", EventType.Approval, "E1", hour, hour_end, "A1",
@@ -344,7 +377,8 @@ def test_dismissal_with_unrelated_non_matching_capsule_stays_invalid():
     hour_end = hour + timedelta(hours=1)
     signed_end = hour + timedelta(minutes=30)
     events = [
-        _event("E1", EventType.SeeqDetection, None, hour, signed_end, "A1", hour),
+        _event("E1", EventType.SeeqDetection, None, hour, signed_end, "A1", hour,
+              detection_class="status-offline"),
         _event("E2", EventType.DismissalProposed, "E1", hour, signed_end, "A1",
                hour + timedelta(minutes=10)),
         _event("E3", EventType.Approval, "E1", hour, signed_end, "A1",
@@ -425,6 +459,7 @@ def test_fixture_cems001_dismissed_matched_window_is_excused_from_detected_union
     branch the uncovered analyzer ultimately routes through)."""
     from clerk.grid import (
         _capsules_by_analyzer,
+        _capsules_by_analyzer_class,
         _manual_and_detected_windows,
         _origin_types,
     )
@@ -440,7 +475,8 @@ def test_fixture_cems001_dismissed_matched_window_is_excused_from_detected_union
     for analyzer, intervals in capsules_by_analyzer.items():
         detected.setdefault(analyzer, []).extend(intervals)
     detected = apply_dismissal_subtraction(
-        detected, observations, origin_types, capsules_by_analyzer, config.JitterToleranceMin)
+        detected, observations, origin_types, _capsules_by_analyzer_class(capsules),
+        config.JitterToleranceMin)
 
     dismissed_window = (_utc(2026, 1, 20, 8, 0), _utc(2026, 1, 20, 12, 0))
     for s, e in detected.get("CEMS-001", []):

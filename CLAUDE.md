@@ -39,10 +39,19 @@ One module at a time. Tests green before moving to the next. Log the stopping po
   observations feed the subtraction list — TechEntry-origin dismissals
   have no capsule counterpart and must not cancel an unrelated ticket's
   detected time at the same analyzer.
-- **Flagged, not blocking:** capsule-match for the subtraction is
-  analyzer-only, not analyzer+DetectionClass (fold.py's `Observation`
-  doesn't carry class). Safe for every current fixture; a real gap if an
-  analyzer ever runs two time-overlapping detection classes concurrently.
+- **RESOLVED (Ryan, 2026-07-02):** capsule-match for the subtraction is now
+  analyzer+DetectionClass. `fold.py`'s `Observation` gained a nullable
+  `detection_class` field (sourced from the origin event's `DetectionClass`
+  column, blank for TechEntry origins) so grid.py can key on it. A
+  dismissal signed against one class can no longer be corroborated by an
+  unrelated class's live capsule at the same analyzer — extends the
+  existing TechEntry-never-subtracts test rather than replacing it.
+- **Fixture correctness fix (same session):** `events.csv` E003 said
+  `status-offline` but its actual corresponding capsule
+  (`capsules.csv`, Jan 20 08:00–12:00) is `failed-daily-validation` — and
+  E004's dismissal reason ("Instrument calibration in progress") confirms
+  that's the right class. Fixed to match; same bug class as the earlier
+  E005 target fix, surfaced by the stricter matching.
 - **Flagged, not blocking:** no daily-calibration event source exists yet
   — branch (iv) never fires via `build_grid` until that ingestion path is
   defined.
@@ -53,6 +62,40 @@ One module at a time. Tests green before moving to the next. Log the stopping po
 - Fixture sweep (Ryan's ask, same session): confirmed E005 was the only
   chain-walking violation in `events.csv` — every other `TargetEventID`
   already referenced its observation's origin directly.
+
+## Diff module (Ryan, 2026-07-02) — gate G5
+
+- **Provenance check requested before building the trace logic:**
+  `RuleApplied` is branch-level only, not usable for flip attribution (and
+  G5 doesn't need it — only Valid transitions matter). `ContributingEventIDs`
+  IS sufficient for the traceable cases via `Observation.contributing_event_ids`.
+- **FLAGGED, not blocking — a real gap found by the check:**
+  `ContributingEventIDs` is sourced only from folded Observations, never
+  from raw capsule-only contributions. An hour invalid purely from a live
+  capsule with no ticket yet (plausible before `delta.py` runs) has EMPTY
+  `ContributingEventIDs` even though it's genuinely invalid. diff.py
+  handles this safely (empty list on a ✗→✓ flip → conservative
+  `INTEGRITY ALERT`, never a silent pass) but not correctly — a real fix
+  needs a per-capsule identifier grid.py doesn't have. Flag for Ryan.
+- Every ✗→✓ flip resolves to exactly one of three outcomes, never a
+  fourth: silent pass (Dismissed + signed extent covers the hour),
+  machine-informational (Withdrawn or BoundaryUpdate, both gated on
+  `Actor == delta.MACHINE_ACTOR`), or INTEGRITY ALERT.
+- **This is where the unapproved-flip safety check fold.py deferred
+  lives:** a Correction (human path) moving a boundary such that an hour
+  flips valid, without going through the machine BoundaryUpdate path,
+  falls through to INTEGRITY ALERT structurally — no special-casing of
+  Correction's polarity needed.
+- Multiple contributing tickets on one flipped cell: ALL must resolve to
+  silent-pass for the overall flip to be silent; any mix of silent-pass +
+  machine-informational rolls the whole flip up to informational (surfaced,
+  not hidden); any single unexplained ticket taints the whole flip to
+  INTEGRITY ALERT.
+- Late-arrival check is independent of flip-tracing — a new invalid cell
+  older than `LateXThresholdDays` (site-local calendar day, strictly older
+  than the threshold) pings regardless of whether it's also part of a flip.
+- `delta.MACHINE_ACTOR` ("clerk-delta") promoted from a literal to a named
+  constant so diff.py doesn't duplicate the magic string.
 
 ## SeeqCovered + NOT-ASSESSED (Ryan, 2026-07-02)
 

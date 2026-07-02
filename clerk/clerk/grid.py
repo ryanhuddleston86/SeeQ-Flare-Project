@@ -45,13 +45,11 @@ entries never have one) — including it would risk canceling an unrelated
 SeeqDetection ticket's genuinely-invalid capsule time at the same analyzer
 via the analyzer-only matching below.
 
-FLAGGED, not blocking: the capsule-match for dismissal subtraction is
-ANALYZER-ONLY, not analyzer+DetectionClass — fold.py's Observation output
-doesn't carry DetectionClass (not in its agreed output field list), so
-grid.py can't key on it without a schema addition. Safe for every fixture
-in this repo today (CEMS-001's two classes never time-overlap), but is a
-real gap if an analyzer ever runs two overlapping-in-time detection
-classes concurrently. Flag for Ryan if that becomes a live scenario.
+RESOLVED 2026-07-02 (was flagged): the capsule-match for dismissal
+subtraction is now analyzer+DetectionClass, not analyzer-only — fold.py's
+Observation carries `detection_class` (sourced from the origin event's
+DetectionClass column). A dismissal signed against one class can no longer
+be corroborated by an unrelated class's live capsule at the same analyzer.
 
 FLAGGED, not blocking: no daily-calibration event source exists yet in any
 fixture or schema. HourContext.failed_cal_at/passing_cal_at are always
@@ -67,7 +65,7 @@ code path here. No branching on source anywhere in this module.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from clerk.fold import ORIGIN_TYPES, Observation, Status, fold
@@ -146,19 +144,19 @@ def _manual_and_detected_windows(
 def _signed_dismissals(
     observations: List[Observation],
     origin_types: Dict[str, EventType],
-) -> List[Tuple[str, Interval]]:
-    """(analyzer, signed_dismissal_extent) for every SeeqDetection-origin
-    Dismissed observation. TechEntry-origin dismissals are excluded — they
-    have no capsule counterpart and must not cancel an unrelated ticket's
-    detected invalid time at the same analyzer."""
-    out: List[Tuple[str, Interval]] = []
+) -> List[Tuple[str, Optional[str], Interval]]:
+    """(analyzer, detection_class, signed_dismissal_extent) for every
+    SeeqDetection-origin Dismissed observation. TechEntry-origin dismissals
+    are excluded — they have no capsule counterpart and must not cancel an
+    unrelated ticket's detected invalid time at the same analyzer."""
+    out: List[Tuple[str, Optional[str], Interval]] = []
     for obs in observations:
         if obs.status is not Status.dismissed or obs.signed_dismissal_extent is None:
             continue
         if origin_types.get(obs.origin_event_id) is not EventType.SeeqDetection:
             continue
         for analyzer in obs.analyzers:
-            out.append((analyzer, obs.signed_dismissal_extent))
+            out.append((analyzer, obs.detection_class, obs.signed_dismissal_extent))
     return out
 
 
@@ -178,18 +176,22 @@ def apply_dismissal_subtraction(
     detected_windows: Dict[str, List[Interval]],
     observations: List[Observation],
     origin_types: Dict[str, EventType],
-    capsules_by_analyzer: Dict[str, List[Interval]],
+    capsules_by_analyzer_class: Dict[Tuple[str, Optional[str]], List[Interval]],
     jitter_minutes: int,
 ) -> Dict[str, List[Interval]]:
-    """Minus signed-dismissal extents, only where a live capsule still
-    matches (jitter tolerance). Subtracts exactly the SIGNED extent, never
-    the capsule's own (possibly wider) interval — any excess beyond the
-    signed extent stays invalid automatically, since it was never removed."""
+    """Minus signed-dismissal extents, only where a live capsule of the
+    SAME analyzer+DetectionClass still matches (jitter tolerance). A
+    dismissal signed against one class is never corroborated by a
+    different class's capsule, even if it overlaps the same analyzer at
+    the same time. Subtracts exactly the SIGNED extent, never the
+    capsule's own (possibly wider) interval — any excess beyond the signed
+    extent stays invalid automatically, since it was never removed."""
     out = {a: list(v) for a, v in detected_windows.items()}
-    for analyzer, signed_extent in _signed_dismissals(observations, origin_types):
+    for analyzer, detection_class, signed_extent in _signed_dismissals(observations, origin_types):
         if analyzer not in out:
             continue
-        if _capsule_still_matches(signed_extent, capsules_by_analyzer.get(analyzer, []), jitter_minutes):
+        capsules = capsules_by_analyzer_class.get((analyzer, detection_class), [])
+        if _capsule_still_matches(signed_extent, capsules, jitter_minutes):
             out[analyzer] = subtract_intervals(out[analyzer], [signed_extent])
     return out
 
@@ -202,6 +204,17 @@ def _capsules_by_analyzer(capsules: List[Capsule]) -> Dict[str, List[Interval]]:
     out: Dict[str, List[Interval]] = {}
     for c in capsules:
         out.setdefault(c.Analyzer, []).append((c.CapsuleStartUTC, c.CapsuleEndUTC))
+    return out
+
+
+def _capsules_by_analyzer_class(capsules: List[Capsule]) -> Dict[Tuple[str, Optional[str]], List[Interval]]:
+    """Keyed by (Analyzer, DetectionClass) for dismissal-subtraction
+    matching — distinct from `_capsules_by_analyzer`, which stays flat
+    since the general detected-invalid union doesn't care about class."""
+    out: Dict[Tuple[str, Optional[str]], List[Interval]] = {}
+    for c in capsules:
+        key = (c.Analyzer, c.DetectionClass or None)
+        out.setdefault(key, []).append((c.CapsuleStartUTC, c.CapsuleEndUTC))
     return out
 
 
@@ -278,7 +291,7 @@ def build_grid(
     for analyzer, intervals in capsules_by_analyzer.items():
         detected_windows.setdefault(analyzer, []).extend(intervals)
     detected_windows = apply_dismissal_subtraction(
-        detected_windows, observations, origin_types, capsules_by_analyzer,
+        detected_windows, observations, origin_types, _capsules_by_analyzer_class(capsules),
         config.JitterToleranceMin)
 
     for analyzer, intervals in _qa_windows_by_analyzer(qa_windows).items():

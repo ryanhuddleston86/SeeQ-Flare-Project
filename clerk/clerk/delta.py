@@ -41,6 +41,12 @@ from typing import Dict, List, Tuple
 
 from clerk.schemas import Capsule, Event, EventType, PullWindow
 
+# Every event this module emits carries this Actor. diff.py (Step 7) checks
+# against it to confirm a Withdrawn/BoundaryUpdate is machine-attributed
+# before treating a grid flip as digest-informational rather than an
+# INTEGRITY ALERT.
+MACHINE_ACTOR = "clerk-delta"
+
 
 @dataclass
 class Episode:
@@ -145,7 +151,7 @@ def run_delta(
             AnalyzerCEMIDs=[analyzer],
             Category="",                     # unused — not repurposed
             ReasonCode="",
-            Actor="clerk-delta",
+            Actor=MACHINE_ACTOR,
             ActedAt=run_at,
             Reason=reason,
             CorrectiveAction="",

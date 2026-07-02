@@ -69,6 +69,47 @@ def test_seeq_detection_origin_needs_review_even_with_corrective_action():
     assert obs.has_corrective_action is True
 
 
+def test_detection_class_sourced_from_origin_seeq_detection_event():
+    """Added 2026-07-02 so grid.py can match dismissals by analyzer+class,
+    not analyzer alone."""
+    obs = _one([_event("E1", EventType.SeeqDetection, None,
+                       ORIGIN_START, ORIGIN_END, "A1", _utc(2026, 3, 1, 8, 5),
+                       detection_class="failed-daily-validation")])
+    assert obs.detection_class == "failed-daily-validation"
+
+
+def test_detection_class_is_none_for_tech_entry_origin():
+    """Nullable — blank on TechEntry origins, since DetectionClass is only
+    ever populated on machine-authored events."""
+    obs = _one([_event("E1", EventType.TechEntry, None,
+                       ORIGIN_START, ORIGIN_END, "A1", _utc(2026, 3, 1, 8, 30))])
+    assert obs.detection_class is None
+
+
+def test_detection_class_blank_string_becomes_none():
+    """Blank -> None generally, not just for TechEntry — a SeeqDetection
+    event with an empty DetectionClass column also yields None."""
+    obs = _one([_event("E1", EventType.SeeqDetection, None,
+                       ORIGIN_START, ORIGIN_END, "A1", _utc(2026, 3, 1, 8, 5),
+                       detection_class="")])
+    assert obs.detection_class is None
+
+
+def test_detection_class_not_affected_by_later_events():
+    """Only the ORIGIN event's DetectionClass is consulted — a later
+    BoundaryUpdate (which also carries a DetectionClass per the
+    machine-authored-events convention) does not override it."""
+    events = [
+        _event("E1", EventType.SeeqDetection, None, ORIGIN_START, ORIGIN_END,
+              "A1", _utc(2026, 3, 1, 8, 5), detection_class="status-offline"),
+        _event("E2", EventType.BoundaryUpdate, "E1", ORIGIN_START,
+              _utc(2026, 3, 1, 13, 0), "A1", _utc(2026, 3, 1, 9, 0),
+              detection_class="status-offline"),
+    ]
+    obs = _one(events)
+    assert obs.detection_class == "status-offline"
+
+
 def test_tech_entry_blank_corrective_action_is_needs_review():
     """FLAGGED guess: single-form submit with no corrective action yet."""
     obs = _one([_event("E1", EventType.TechEntry, None,
@@ -441,6 +482,10 @@ def test_fixture_e003_dismissed_with_own_signed_extent():
     assert obs.status is Status.dismissed
     assert obs.signed_dismissal_extent == (
         _utc(2026, 1, 20, 8, 0), _utc(2026, 1, 20, 12, 0))
+    assert obs.detection_class == "failed-daily-validation", \
+        "fixture correctness fix (2026-07-02): E003 previously said " \
+        "status-offline, mismatched against capsules.csv's actual " \
+        "failed-daily-validation entry for the same window"
 
 
 def test_fixture_e006_tech_entry_with_corrective_action_confirmed():
