@@ -51,6 +51,15 @@ Observation carries `detection_class` (sourced from the origin event's
 DetectionClass column). A dismissal signed against one class can no longer
 be corroborated by an unrelated class's live capsule at the same analyzer.
 
+RESOLVED 2026-07-02 (was flagged, diff.py's provenance gap): every
+GridCell.ContributingEventIDs now cites raw capsule contributions too, not
+only folded Observations — `capsule_provenance_id` gives each capsule a
+deterministic synthetic id (analyzer+class+start+end, prefixed `CAP:` to
+stay distinguishable from real EventIDs). This is what lets diff.py
+resolve an hour invalid purely from an unticketed live capsule as silent
+(unchanged detection, nothing to approve) instead of an unconditional
+INTEGRITY ALERT.
+
 FLAGGED, not blocking: no daily-calibration event source exists yet in any
 fixture or schema. HourContext.failed_cal_at/passing_cal_at are always
 None here — branch (iv) never fires via build_grid until that ingestion
@@ -249,9 +258,33 @@ def _local_label(hour_start_utc: datetime, tz_name: str) -> str:
 # Provenance
 # ---------------------------------------------------------------------------
 
-def _provenance_index(observations: List[Observation]) -> List[Tuple[str, Interval, str]]:
-    return [(analyzer, interval, obs.origin_event_id)
-            for analyzer, interval, obs in _contributing(observations)]
+# Prefix distinguishes synthetic capsule provenance ids from real EventIDs
+# in ContributingEventIDs — an unticketed capsule contribution is real
+# provenance (spec: "every resulting interval carries source event IDs"),
+# not something to omit just because no ticket exists for it yet.
+CAPSULE_ID_PREFIX = "CAP:"
+
+
+def capsule_provenance_id(c: Capsule) -> str:
+    """Deterministic synthetic identifier: analyzer+class+start+end. Two
+    capsules with an identical id ARE the same physical detection, unchanged
+    — this identity is exactly what diff.py's silent-pass-on-stable-
+    unticketed-capsule check relies on (Ryan, 2026-07-02)."""
+    return (f"{CAPSULE_ID_PREFIX}{c.Analyzer}:{c.DetectionClass}:"
+            f"{c.CapsuleStartUTC.isoformat()}:{c.CapsuleEndUTC.isoformat()}")
+
+
+def _provenance_index(
+    observations: List[Observation],
+    capsules: List[Capsule],
+) -> List[Tuple[str, Interval, str]]:
+    obs_provenance = [(analyzer, interval, obs.origin_event_id)
+                      for analyzer, interval, obs in _contributing(observations)]
+    capsule_provenance = [
+        (c.Analyzer, (c.CapsuleStartUTC, c.CapsuleEndUTC), capsule_provenance_id(c))
+        for c in capsules
+    ]
+    return obs_provenance + capsule_provenance
 
 
 def _contributing_ids(
@@ -298,7 +331,7 @@ def build_grid(
         manual_windows.setdefault(analyzer, []).extend(intervals)
 
     operating_by_unit = _operating_by_unit(operating_windows)
-    provenance = _provenance_index(observations)
+    provenance = _provenance_index(observations, capsules)
 
     cells: List[GridCell] = []
     for au in analyzer_units:

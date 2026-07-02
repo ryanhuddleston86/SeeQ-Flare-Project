@@ -16,6 +16,7 @@ from clerk.fold import Observation, Status
 from clerk.grid import (
     apply_dismissal_subtraction,
     build_grid,
+    capsule_provenance_id,
     contributing_observation_windows,
 )
 from clerk.rules import HourContext, evaluate_hour
@@ -430,6 +431,57 @@ def test_local_label_reflects_site_timezone():
     )
     assert "08:00" in cells[0].HourLocalLabel
     assert "EDT" in cells[0].HourLocalLabel
+
+
+# ---------------------------------------------------------------------------
+# Capsule provenance (Ryan, 2026-07-02 — closes diff.py's flagged gap)
+# ---------------------------------------------------------------------------
+
+def test_capsule_provenance_id_is_deterministic_and_identity_based():
+    c1 = Capsule("A1", "status-offline", _utc(2026, 4, 1, 8, 0), _utc(2026, 4, 1, 9, 0))
+    c2 = Capsule("A1", "status-offline", _utc(2026, 4, 1, 8, 0), _utc(2026, 4, 1, 9, 0))
+    moved = Capsule("A1", "status-offline", _utc(2026, 4, 1, 8, 5), _utc(2026, 4, 1, 9, 0))
+    other_class = Capsule("A1", "failed-daily-validation",
+                          _utc(2026, 4, 1, 8, 0), _utc(2026, 4, 1, 9, 0))
+    assert capsule_provenance_id(c1) == capsule_provenance_id(c2)
+    assert capsule_provenance_id(c1) != capsule_provenance_id(moved)
+    assert capsule_provenance_id(c1) != capsule_provenance_id(other_class)
+    assert capsule_provenance_id(c1).startswith("CAP:")
+
+
+def test_unticketed_capsule_appears_in_contributing_event_ids():
+    """An hour invalid purely from a live capsule (no Events at all) still
+    carries provenance — the whole point of the capsule-id extension."""
+    hour = _utc(2026, 4, 1, 8, 0)
+    hour_end = hour + timedelta(hours=1)
+    capsule = Capsule("A1", "status-offline", hour, hour_end)
+    cells = build_grid(
+        events=[], capsules=[capsule],
+        operating_windows=[OperatingWindow("U1", hour, hour_end)],
+        analyzer_units=[AnalyzerUnit("A1", "U1", SeeqCovered=True)],
+        qa_windows=[], config=_config(),
+        window_start=hour, window_end=hour_end,
+    )
+    assert cells[0].Valid is CellValid.invalid
+    assert cells[0].ContributingEventIDs == [capsule_provenance_id(capsule)]
+
+
+def test_ticketed_capsule_shows_both_ticket_and_capsule_provenance():
+    """When a ticket AND its originating capsule both cover the hour,
+    ContributingEventIDs cites both — more transparency, not deduped."""
+    hour = _utc(2026, 4, 1, 8, 0)
+    hour_end = hour + timedelta(hours=1)
+    events = [_event("E1", EventType.SeeqDetection, None, hour, hour_end, "A1", hour,
+                     detection_class="status-offline")]
+    capsule = Capsule("A1", "status-offline", hour, hour_end)
+    cells = build_grid(
+        events=events, capsules=[capsule],
+        operating_windows=[OperatingWindow("U1", hour, hour_end)],
+        analyzer_units=[AnalyzerUnit("A1", "U1", SeeqCovered=True)],
+        qa_windows=[], config=_config(),
+        window_start=hour, window_end=hour_end,
+    )
+    assert set(cells[0].ContributingEventIDs) == {"E1", capsule_provenance_id(capsule)}
 
 
 # ---------------------------------------------------------------------------

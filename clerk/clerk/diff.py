@@ -34,16 +34,17 @@ and Observation.contributing_event_ids gives the full chronological event
 history needed to find the specific Approval/Withdrawn/BoundaryUpdate that
 explains a flip.
 
-FLAGGED, not blocking — a real provenance gap: grid.py's
-ContributingEventIDs is sourced ONLY from folded Observations
-(`_provenance_index`); it does NOT include raw capsule-only contributions.
-An hour that is invalid purely because of a live capsule with no
-SeeqDetection ticket yet (plausible before delta.py runs and creates one)
-has EMPTY ContributingEventIDs even though it's genuinely invalid. This
-diff.py handles it safely, not correctly: empty ContributingEventIDs on a
-✗→✓ flip is untraceable by construction and conservatively raises
-INTEGRITY ALERT (fail-safe — over-alerts, never silently passes). A real
-fix needs a per-capsule identifier grid.py doesn't have yet. Flag for Ryan.
+RESOLVED 2026-07-02 (was flagged as a provenance gap): ContributingEventIDs
+now also carries synthetic capsule ids (`grid.capsule_provenance_id`,
+prefixed `CAP:`) for raw, unticketed detection contributions. A flip whose
+ONLY contributors are unticketed capsules that are identity-unchanged
+(same analyzer+class+start+end) between the prior pull and tonight's
+`current_capsules` resolves SILENT — the raw detection didn't change, so
+there is nothing new to approve or explain. A capsule that's new, moved
+(any interval change yields a different synthetic id), or gone entirely
+still has no Observation to check and falls to INTEGRITY ALERT exactly as
+before — this only closes the "stable, still-unticketed" case, not the
+general gap of unticketed detections having no ledger trail at all.
 """
 from __future__ import annotations
 
@@ -55,7 +56,8 @@ from zoneinfo import ZoneInfo
 
 from clerk.delta import MACHINE_ACTOR
 from clerk.fold import Observation, Status, fold
-from clerk.schemas import CellValid, Event, EventType, GridCell
+from clerk.grid import CAPSULE_ID_PREFIX, capsule_provenance_id
+from clerk.schemas import Capsule, CellValid, Event, EventType, GridCell
 
 
 class FlipOutcome(str, Enum):
@@ -81,6 +83,16 @@ class LateArrival:
 
 
 @dataclass
+class NewInvalidCell:
+    """Every cell newly invalid since the prior grid — a superset of
+    `late_arrivals` (which is filtered to those past LateXThresholdDays).
+    Exists so digest.py's "new downtime since yesterday" section doesn't
+    need to re-derive this from prior/current cells itself."""
+    analyzer: str
+    hour_start_utc: datetime
+
+
+@dataclass
 class DiffResult:
     is_first_run: bool
     new_cell_count: int
@@ -88,6 +100,7 @@ class DiffResult:
     machine_informational: List[CellFlip] = field(default_factory=list)
     integrity_alerts: List[CellFlip] = field(default_factory=list)
     late_arrivals: List[LateArrival] = field(default_factory=list)
+    new_invalid_cells: List[NewInvalidCell] = field(default_factory=list)
 
 
 @dataclass
@@ -116,6 +129,21 @@ def _find_last_event(
         if e is not None and e.EventType in types:
             return e
     return None
+
+
+def _explain_capsule(capsule_id: str, current_capsule_ids: Set[str]) -> _Explanation:
+    """A capsule-provenance contributor (no ticket ever existed for it).
+    Identity-unchanged across both pulls -> nothing new happened at the
+    detection layer, so the flip needs no approval. New, moved (any
+    interval change yields a different id), or gone entirely -> there is
+    no Observation to check, so this still falls to INTEGRITY ALERT."""
+    if capsule_id in current_capsule_ids:
+        return _Explanation(FlipOutcome.silent_pass,
+                            f"{capsule_id}: unticketed capsule unchanged across both "
+                            "pulls — nothing to approve")
+    return _Explanation(FlipOutcome.integrity_alert,
+                        f"{capsule_id}: unticketed capsule no longer present (or moved) "
+                        "— no Observation exists to explain the flip")
 
 
 def _explain_one(
@@ -179,17 +207,20 @@ def _trace_flip(
     origin_ids: List[str],
     observations_by_origin: Dict[str, Observation],
     events_by_id: Dict[str, Event],
+    current_capsule_ids: Set[str],
 ) -> CellFlip:
     hour_end = hour_start + timedelta(hours=1)
 
     if not origin_ids:
         return CellFlip(analyzer, hour_start, FlipOutcome.integrity_alert,
-                        "no contributing ticket recorded for the prior invalid hour "
-                        "(pure-capsule-driven invalidity has no provenance id — "
-                        "see module docstring)", [])
+                        "no contributing ticket or capsule recorded for the prior "
+                        "invalid hour", [])
 
-    explanations = [_explain_one(oid, observations_by_origin, events_by_id, hour_start, hour_end)
-                    for oid in origin_ids]
+    explanations = [
+        _explain_capsule(oid, current_capsule_ids) if oid.startswith(CAPSULE_ID_PREFIX)
+        else _explain_one(oid, observations_by_origin, events_by_id, hour_start, hour_end)
+        for oid in origin_ids
+    ]
     detail = "; ".join(e.detail for e in explanations)
 
     if all(e.outcome is FlipOutcome.silent_pass for e in explanations):
@@ -209,9 +240,16 @@ def diff_grids(
     run_date: date,
     late_x_threshold_days: int,
     site_timezone: str,
+    current_capsules: List[Capsule] = (),
 ) -> DiffResult:
     """Pure function. `prior_cells` == [] means first run — everything is
-    reported new, no flip-tracing (nothing to diff against)."""
+    reported new, no flip-tracing (nothing to diff against).
+
+    `current_capsules` is tonight's raw capsule pull — the same list the
+    caller already read to build `current_cells`. It is only consulted for
+    unticketed capsule-provenance contributors (ids prefixed `CAP:`) to
+    check identity-unchanged-across-both-pulls; ticket-based tracing
+    doesn't use it at all."""
     if not prior_cells:
         return DiffResult(is_first_run=True, new_cell_count=len(current_cells))
 
@@ -220,6 +258,7 @@ def diff_grids(
 
     observations_by_origin = {o.origin_event_id: o for o in fold(events)}
     events_by_id = {e.EventID: e for e in events}
+    current_capsule_ids = {capsule_provenance_id(c) for c in current_capsules}
 
     result = DiffResult(is_first_run=False, new_cell_count=0)
 
@@ -229,7 +268,7 @@ def diff_grids(
             continue
         if prior.Valid is CellValid.invalid and current.Valid is CellValid.valid:
             flip = _trace_flip(analyzer, hour_start, prior.ContributingEventIDs,
-                               observations_by_origin, events_by_id)
+                               observations_by_origin, events_by_id, current_capsule_ids)
             {
                 FlipOutcome.silent_pass: result.silent_passes,
                 FlipOutcome.machine_informational: result.machine_informational,
@@ -242,6 +281,7 @@ def diff_grids(
         prior = prior_by_key.get((analyzer, hour_start))
         if prior is not None and prior.Valid is CellValid.invalid:
             continue  # not new
+        result.new_invalid_cells.append(NewInvalidCell(analyzer, hour_start))
         local_day = _local_date(hour_start, site_timezone)
         age_days = (run_date - local_day).days
         if age_days > late_x_threshold_days:

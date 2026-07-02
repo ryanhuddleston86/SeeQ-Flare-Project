@@ -9,7 +9,8 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 from clerk.diff import FlipOutcome, diff_grids
-from clerk.schemas import CellValid, Event, EventType, GridCell
+from clerk.grid import capsule_provenance_id
+from clerk.schemas import Capsule, CellValid, Event, EventType, GridCell
 
 HOUR = datetime(2026, 4, 1, 8, 0, tzinfo=timezone.utc)
 RUN_DATE = date(2026, 4, 1)
@@ -215,13 +216,74 @@ def test_missing_observation_is_integrity_alert():
 
 
 def test_empty_contributing_event_ids_is_integrity_alert():
-    """FLAGGED provenance gap: purely capsule-driven invalidity has no
-    ticket to trace — conservatively alerts rather than silently passing."""
+    """No provenance recorded at all (neither ticket nor capsule id) —
+    conservatively alerts rather than silently passing."""
     prior = [_cell("A1", HOUR, CellValid.invalid, [])]
     current = [_cell("A1", HOUR, CellValid.valid)]
     result = _diff(prior, current, [])
     assert len(result.integrity_alerts) == 1
-    assert "no contributing ticket" in result.integrity_alerts[0].explanation
+    assert "no contributing ticket or capsule" in result.integrity_alerts[0].explanation
+
+
+# ---------------------------------------------------------------------------
+# Unticketed capsule provenance (Ryan, 2026-07-02 — closes the flagged gap
+# for the stable-detection case)
+# ---------------------------------------------------------------------------
+
+def test_unticketed_capsule_unchanged_two_nights_running_is_silent():
+    """REQUIRED: an hour invalid purely from a live capsule two nights
+    running, no Events rows at all -> silent, not INTEGRITY ALERT. The raw
+    detection is identical (same analyzer+class+start+end) on both pulls —
+    nothing new to approve."""
+    capsule = Capsule("A1", "status-offline", HOUR, HOUR + timedelta(hours=1))
+    cap_id = capsule_provenance_id(capsule)
+    prior = [_cell("A1", HOUR, CellValid.invalid, [cap_id])]
+    current = [_cell("A1", HOUR, CellValid.valid)]
+    result = diff_grids(prior, current, [], RUN_DATE, 7, TZ, current_capsules=[capsule])
+    assert len(result.silent_passes) == 1
+    assert result.integrity_alerts == result.machine_informational == []
+
+
+def test_unticketed_capsule_gone_still_integrity_alert():
+    """A capsule that's gone (or moved — same effect, different id) still
+    has no Observation to check: falls to INTEGRITY ALERT exactly as
+    before the capsule-provenance extension."""
+    capsule = Capsule("A1", "status-offline", HOUR, HOUR + timedelta(hours=1))
+    cap_id = capsule_provenance_id(capsule)
+    prior = [_cell("A1", HOUR, CellValid.invalid, [cap_id])]
+    current = [_cell("A1", HOUR, CellValid.valid)]
+    result = diff_grids(prior, current, [], RUN_DATE, 7, TZ, current_capsules=[])
+    assert len(result.integrity_alerts) == 1
+    assert result.silent_passes == []
+
+
+def test_unticketed_capsule_moved_gets_a_different_id_and_still_alerts():
+    capsule = Capsule("A1", "status-offline", HOUR, HOUR + timedelta(hours=1))
+    cap_id = capsule_provenance_id(capsule)
+    moved_capsule = Capsule("A1", "status-offline",
+                            HOUR + timedelta(minutes=10), HOUR + timedelta(hours=1))
+    prior = [_cell("A1", HOUR, CellValid.invalid, [cap_id])]
+    current = [_cell("A1", HOUR, CellValid.valid)]
+    result = diff_grids(prior, current, [], RUN_DATE, 7, TZ, current_capsules=[moved_capsule])
+    assert len(result.integrity_alerts) == 1
+
+
+def test_mixed_capsule_and_ticket_contributors_both_must_resolve():
+    """One contributor is a stable unticketed capsule (silent), the other
+    is a properly approved ticket (silent) — the whole flip stays silent."""
+    hour_end = HOUR + timedelta(hours=1)
+    capsule = Capsule("A1", "status-offline", HOUR, hour_end)
+    cap_id = capsule_provenance_id(capsule)
+    events = [
+        _event("E1", EventType.SeeqDetection, None, HOUR, hour_end, "A1", HOUR),
+        _event("E2", EventType.Approval, "E1", HOUR, hour_end, "A1",
+              HOUR + timedelta(minutes=10), actor="supervisor"),
+    ]
+    prior = [_cell("A1", HOUR, CellValid.invalid, [cap_id, "E1"])]
+    current = [_cell("A1", HOUR, CellValid.valid)]
+    result = diff_grids(prior, current, events, RUN_DATE, 7, TZ, current_capsules=[capsule])
+    assert len(result.silent_passes) == 1
+    assert result.integrity_alerts == result.machine_informational == []
 
 
 # ---------------------------------------------------------------------------

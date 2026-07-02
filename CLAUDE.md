@@ -69,14 +69,21 @@ One module at a time. Tests green before moving to the next. Log the stopping po
   `RuleApplied` is branch-level only, not usable for flip attribution (and
   G5 doesn't need it — only Valid transitions matter). `ContributingEventIDs`
   IS sufficient for the traceable cases via `Observation.contributing_event_ids`.
-- **FLAGGED, not blocking — a real gap found by the check:**
-  `ContributingEventIDs` is sourced only from folded Observations, never
-  from raw capsule-only contributions. An hour invalid purely from a live
-  capsule with no ticket yet (plausible before `delta.py` runs) has EMPTY
-  `ContributingEventIDs` even though it's genuinely invalid. diff.py
-  handles this safely (empty list on a ✗→✓ flip → conservative
-  `INTEGRITY ALERT`, never a silent pass) but not correctly — a real fix
-  needs a per-capsule identifier grid.py doesn't have. Flag for Ryan.
+- **RESOLVED (Ryan, 2026-07-02) — the stable-detection case of the gap
+  above:** `grid.py` now gives every capsule a deterministic synthetic
+  provenance id (`capsule_provenance_id`, prefixed `CAP:`) so
+  `ContributingEventIDs` cites unticketed raw-capsule contributions too.
+  A ✗→✓ flip whose ONLY contributors are unticketed capsules that are
+  identity-unchanged (same analyzer+class+start+end) between the prior
+  pull and tonight's capsule set resolves SILENT — the raw detection
+  didn't change, nothing to approve. A capsule that's new, moved (any
+  interval change → a different id), or gone still has no Observation to
+  check and falls to `INTEGRITY ALERT` exactly as before — this closes
+  only the "stable, still-unticketed" case, not the general gap of
+  unticketed detections having no ledger trail at all.
+- `DiffResult` gained `new_invalid_cells` (every newly-invalid cell, a
+  superset of `late_arrivals`) so `digest.py`'s "new downtime since
+  yesterday" section doesn't re-derive prior/current diffing itself.
 - Every ✗→✓ flip resolves to exactly one of three outcomes, never a
   fourth: silent pass (Dismissed + signed extent covers the hour),
   machine-informational (Withdrawn or BoundaryUpdate, both gated on
@@ -96,6 +103,32 @@ One module at a time. Tests green before moving to the next. Log the stopping po
   than the threshold) pings regardless of whether it's also part of a flip.
 - `delta.MACHINE_ACTOR` ("clerk-delta") promoted from a literal to a named
   constant so diff.py doesn't duplicate the magic string.
+
+## Digest module (2026-07-02)
+
+- Pure renderer, no I/O — `render_digest(...) -> str`; run.py (not yet
+  built) writes the result to `out/<run_date>/digest.md`.
+- Sections in spec order: heartbeat → integrity alerts → new downtime
+  since yesterday → late-arriving ✗ → pending dismissals (+ age, + any
+  cancel-approval flag) → withdrawals & conflicts → summary counts.
+- First run collapses the three diff-derived sections (alerts/new-downtime/
+  late-arrivals) to a single explanatory note each, per spec ("digest says
+  so") — no per-cell itemization on day one.
+- Re-folds `events` itself to find Dismissal-pending observations —
+  `DiffResult` doesn't carry the full Observation list, only flip/alert
+  data, so this is the natural seam rather than widening diff.py's output.
+- Withdrawals = tonight's `DeltaResult.new_events` filtered to
+  `EventType.Withdrawn` (not all historically-Withdrawn observations,
+  which would repeat every night). Conflicts = `DeltaResult.flags` entries
+  prefixed `CONFLICT`. Cancel-approval flags matched to a pending
+  dismissal by substring (`CANCEL-APPROVAL` + the origin id appearing in
+  the flag text) — no new schema field for the association.
+- **Flagged, not blocking, two choices without a spec-literal answer:**
+  (1) pending-dismissal age uses UTC calendar days from the
+  `DismissalProposed` event's `ActedAt`, not site-local like the
+  late-arrival check — age here is coarse staleness, not an hour-precision
+  compliance boundary; (2) first-run "new downtime" is a single count, not
+  itemized (itemizing everything on day one is noise).
 
 ## SeeqCovered + NOT-ASSESSED (Ryan, 2026-07-02)
 
