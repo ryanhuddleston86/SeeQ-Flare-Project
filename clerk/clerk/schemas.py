@@ -82,6 +82,10 @@ class Event:
     ActedAt: datetime
     Reason: str
     CorrectiveAction: str
+    # Dedicated column for machine-authored events (Ryan, 2026-07-02): blank
+    # on human-authored EventTypes. Category is unused for now — do not
+    # repurpose it.
+    DetectionClass: str = ""
 
 
 @dataclass
@@ -169,6 +173,7 @@ def read_events(path: Path) -> List[Event]:
                 ActedAt=_dt(r["ActedAt"]),
                 Reason=r["Reason"],
                 CorrectiveAction=r["CorrectiveAction"],
+                DetectionClass=(r.get("DetectionClass") or "").strip(),
             ))
     return rows
 
@@ -263,7 +268,7 @@ def read_config(path: Path) -> SiteConfig:
 _EVENT_HEADERS = [
     "EventID", "EventType", "TargetEventID", "ExtentStartUTC", "ExtentEndUTC",
     "AnalyzerCEMIDs", "Category", "ReasonCode", "Actor", "ActedAt", "Reason",
-    "CorrectiveAction",
+    "CorrectiveAction", "DetectionClass",
 ]
 
 
@@ -286,6 +291,7 @@ def write_events(path: Path, events: List[Event]) -> None:
                 "ActedAt": e.ActedAt.isoformat(),
                 "Reason": e.Reason,
                 "CorrectiveAction": e.CorrectiveAction,
+                "DetectionClass": e.DetectionClass,
             })
 
 

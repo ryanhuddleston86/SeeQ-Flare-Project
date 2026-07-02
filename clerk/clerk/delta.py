@@ -5,8 +5,13 @@ at its eCFR verbatim review pause).
 
 Compares tonight's capsules against the known-episode set, per analyzer +
 detection class, matched by STRICT temporal overlap — never start-time, and
-abutment (end == start) is NOT overlap. Abutting capsules stay two tickets
-until Ryan rules otherwise; every abutment encountered is flagged, not decided.
+abutment (end == start) is NOT overlap.
+
+Abutment RULED (Ryan, 2026-07-02): at capsule ingestion — before matching
+against history — same-analyzer + same-class capsules with zero gap coalesce
+into one candidate episode for tonight's pull. Matching/withdrawal logic is
+otherwise unchanged. Episode-vs-capsule abutment across the history boundary
+remains strict no-match and is still flagged, not decided.
 
 Pull-window scoping (spec open item 7, made concrete by the drift pair):
 Withdrawn may only be emitted for episodes fully INSIDE the run's pull window.
@@ -24,9 +29,9 @@ Deferred to full Step 3a: reanimation (matching against Withdrawn episodes in
 the lookback window), material-boundary checks against grid cells and
 dismissal coverage (jitter-only here), and BoundaryUpdate splits.
 
-Encoding convention (needs Ryan's blessing): machine-authored SeeqDetection
-proposals carry the DetectionClass in the Event's Category field — the Event
-schema has no DetectionClass column, and the episode must round-trip it.
+Encoding RULED (Ryan, 2026-07-02): machine-authored events carry their class
+in the Event's dedicated DetectionClass column, blank for human-authored
+EventTypes. Category is unused and not repurposed.
 """
 from __future__ import annotations
 
@@ -56,8 +61,8 @@ class DeltaResult:
 
 
 def episodes_from_detections(events: List[Event]) -> List[Episode]:
-    """Materialize episodes from SeeqDetection events (Category carries the
-    DetectionClass — see module docstring)."""
+    """Materialize episodes from SeeqDetection events (the dedicated
+    DetectionClass column carries the class — see module docstring)."""
     eps = []
     for e in events:
         if e.EventType is not EventType.SeeqDetection:
@@ -65,11 +70,40 @@ def episodes_from_detections(events: List[Event]) -> List[Episode]:
         eps.append(Episode(
             EpisodeID=e.EventID,
             Analyzer=e.AnalyzerCEMIDs[0],
-            DetectionClass=e.Category,
+            DetectionClass=e.DetectionClass,
             StartUTC=e.ExtentStartUTC,
             EndUTC=e.ExtentEndUTC,
         ))
     return eps
+
+
+def coalesce_capsules(capsules: List[Capsule]) -> List[Capsule]:
+    """Ingestion-time coalescing (Ryan's ruling, 2026-07-02): same-analyzer +
+    same-DetectionClass capsules with ZERO gap (end[i] == start[i+1]) merge
+    into one candidate episode for tonight's pull. Upstream max capsule
+    duration is 2 h, so long outages arrive as abutting chains — this makes
+    them present as one continuous episode. Gaps of any size stay split."""
+    ordered = sorted(capsules, key=lambda c: (c.Analyzer, c.DetectionClass,
+                                              c.CapsuleStartUTC, c.CapsuleEndUTC))
+    out: List[Capsule] = []
+    for c in ordered:
+        if (out
+                and (out[-1].Analyzer, out[-1].DetectionClass) == (c.Analyzer, c.DetectionClass)
+                and out[-1].CapsuleEndUTC == c.CapsuleStartUTC):
+            out[-1] = Capsule(
+                Analyzer=c.Analyzer,
+                DetectionClass=c.DetectionClass,
+                CapsuleStartUTC=out[-1].CapsuleStartUTC,
+                CapsuleEndUTC=c.CapsuleEndUTC,
+            )
+        else:
+            out.append(Capsule(
+                Analyzer=c.Analyzer,
+                DetectionClass=c.DetectionClass,
+                CapsuleStartUTC=c.CapsuleStartUTC,
+                CapsuleEndUTC=c.CapsuleEndUTC,
+            ))
+    return out
 
 
 def _overlaps(a_start, a_end, b_start, b_end) -> bool:
@@ -100,7 +134,7 @@ def run_delta(
         seq += 1
         return f"{id_prefix}-{seq:04d}"
 
-    def propose(event_type: EventType, analyzer: str, category: str,
+    def propose(event_type: EventType, analyzer: str, detection_class: str,
                 start, end, target: str | None, reason: str) -> None:
         result.new_events.append(Event(
             EventID=next_id(),
@@ -109,17 +143,18 @@ def run_delta(
             ExtentStartUTC=start,
             ExtentEndUTC=end,
             AnalyzerCEMIDs=[analyzer],
-            Category=category,
+            Category="",                     # unused — not repurposed
             ReasonCode="",
             Actor="clerk-delta",
             ActedAt=run_at,
             Reason=reason,
             CorrectiveAction="",
+            DetectionClass=detection_class,  # machine-authored: dedicated column
         ))
 
-    # Deterministic processing order — same inputs, same output, byte for byte.
-    caps = sorted(capsules, key=lambda c: (c.Analyzer, c.DetectionClass,
-                                           c.CapsuleStartUTC, c.CapsuleEndUTC))
+    # Ingestion-time coalescing precedes matching (Ryan's ruling 2026-07-02);
+    # coalesce_capsules also yields deterministic processing order.
+    caps = coalesce_capsules(capsules)
     eps = sorted(episodes, key=lambda e: (e.Analyzer, e.DetectionClass,
                                           e.StartUTC, e.EndUTC))
 
@@ -141,16 +176,8 @@ def run_delta(
                     "strict overlap treats them as unrelated (two tickets); Ryan to rule"
                 )
 
-    # Capsule-capsule abutment within tonight's set (same analyzer + class).
-    for i in range(len(caps) - 1):
-        a, b = caps[i], caps[i + 1]
-        if (a.Analyzer, a.DetectionClass) == (b.Analyzer, b.DetectionClass) \
-                and a.CapsuleEndUTC == b.CapsuleStartUTC:
-            result.flags.append(
-                f"ABUTMENT capsules {a.Analyzer} {a.CapsuleStartUTC:%Y-%m-%dT%H:%MZ}"
-                f"–{a.CapsuleEndUTC:%H:%MZ} and {b.CapsuleStartUTC:%H:%MZ}"
-                f"–{b.CapsuleEndUTC:%H:%MZ} — strict overlap keeps two tickets; Ryan to rule"
-            )
+    # (Capsule-capsule abutment within tonight's set no longer flags — it is
+    # resolved by ingestion-time coalescing, per Ryan's ruling 2026-07-02.)
 
     # --- capsule side -------------------------------------------------------
     for i, c in enumerate(caps):

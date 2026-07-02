@@ -65,8 +65,13 @@ precedence in the skeleton is provisional and still `[VERIFY]` vs. the
 - **Pull-window scoping (spec open item 7, now concrete):** the delta writer
   takes a pull window per run; Withdrawn may only be emitted for episodes fully
   INSIDE that window. Absence outside the pulled range is not evidence.
-- **Abutting capsules: strict overlap = two tickets until Ryan rules
-  otherwise** — every abutment is flagged, never silently decided.
+- **Abutment RULED (Ryan, 2026-07-02):** at capsule ingestion — before
+  matching against history — same-analyzer + same-class capsules with zero
+  gap coalesce into one candidate episode. Episode-vs-capsule abutment across
+  the history boundary remains strict no-match, flagged not decided.
+- **Machine-authored events carry their class in the Events ledger's dedicated
+  `DetectionClass` column** (blank for human-authored EventTypes). Category is
+  unused — do not repurpose it.
 - `capsules_lubeflare_real.csv` contains the phantom Jun 8–9 capsule
   (pre-fix export) — superseded as demo seed; regenerate post-fix.
 

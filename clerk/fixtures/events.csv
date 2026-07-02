@@ -1,10 +1,10 @@
-EventID,EventType,TargetEventID,ExtentStartUTC,ExtentEndUTC,AnalyzerCEMIDs,Category,ReasonCode,Actor,ActedAt,Reason,CorrectiveAction
-E001,SeeqDetection,,2026-01-15T14:00:00Z,2026-01-15T18:00:00Z,CEMS-001,automated,,seeq-auto,2026-01-15T14:05:00Z,Automated detection,
-E002,Confirmation,E001,2026-01-15T14:00:00Z,2026-01-15T18:00:00Z,CEMS-001,confirmed,BKD,jsmith,2026-01-15T16:00:00Z,Equipment failure confirmed,Repaired at 18:00
-E003,SeeqDetection,,2026-01-20T08:00:00Z,2026-01-20T12:00:00Z,CEMS-001,automated,,seeq-auto,2026-01-20T08:05:00Z,Automated detection,
-E004,DismissalProposed,E003,2026-01-20T08:00:00Z,2026-01-20T12:00:00Z,CEMS-001,dismissal,,jdoe,2026-01-20T10:00:00Z,Instrument calibration in progress,
-E005,Approval,E004,2026-01-20T08:00:00Z,2026-01-20T12:00:00Z,CEMS-001,dismissal,,supervisor,2026-01-20T11:00:00Z,Approved,
-E006,TechEntry,,2026-01-22T00:00:00Z,2026-01-22T04:00:00Z,CEMS-002,tech,MAINT,techops,2026-01-22T00:30:00Z,Scheduled maintenance,Completed at 04:00
-E007,SeeqDetection,,2026-01-25T10:00:00Z,2026-01-25T14:00:00Z,CEMS-002,automated,,seeq-auto,2026-01-25T10:05:00Z,Automated detection,
-E008,Correction,E007,2026-01-25T11:00:00Z,2026-01-25T14:00:00Z,CEMS-002;CEMS-003,correction,BKD,jsmith,2026-01-25T12:00:00Z,Extent corrected after review,
-E009,TechEntry,,2026-02-03T09:00:00Z,2026-02-03T15:00:00Z,LUBEFLR-NHV-BTU;LUBEFLR-H2S-PCT;LUBEFLR-H2S-PPM,tech,MAINT,techops,2026-02-03T09:15:00Z,GC maintenance — single instrument feeds all three channels,GC restored 15:00
+EventID,EventType,TargetEventID,ExtentStartUTC,ExtentEndUTC,AnalyzerCEMIDs,Category,ReasonCode,Actor,ActedAt,Reason,CorrectiveAction,DetectionClass
+E001,SeeqDetection,,2026-01-15T14:00:00Z,2026-01-15T18:00:00Z,CEMS-001,,,seeq-auto,2026-01-15T14:05:00Z,Automated detection,,status-offline
+E002,Confirmation,E001,2026-01-15T14:00:00Z,2026-01-15T18:00:00Z,CEMS-001,confirmed,BKD,jsmith,2026-01-15T16:00:00Z,Equipment failure confirmed,Repaired at 18:00,
+E003,SeeqDetection,,2026-01-20T08:00:00Z,2026-01-20T12:00:00Z,CEMS-001,,,seeq-auto,2026-01-20T08:05:00Z,Automated detection,,status-offline
+E004,DismissalProposed,E003,2026-01-20T08:00:00Z,2026-01-20T12:00:00Z,CEMS-001,dismissal,,jdoe,2026-01-20T10:00:00Z,Instrument calibration in progress,,
+E005,Approval,E004,2026-01-20T08:00:00Z,2026-01-20T12:00:00Z,CEMS-001,dismissal,,supervisor,2026-01-20T11:00:00Z,Approved,,
+E006,TechEntry,,2026-01-22T00:00:00Z,2026-01-22T04:00:00Z,CEMS-002,tech,MAINT,techops,2026-01-22T00:30:00Z,Scheduled maintenance,Completed at 04:00,
+E007,SeeqDetection,,2026-01-25T10:00:00Z,2026-01-25T14:00:00Z,CEMS-002,,,seeq-auto,2026-01-25T10:05:00Z,Automated detection,,status-offline
+E008,Correction,E007,2026-01-25T11:00:00Z,2026-01-25T14:00:00Z,CEMS-002;CEMS-003,correction,BKD,jsmith,2026-01-25T12:00:00Z,Extent corrected after review,,
+E009,TechEntry,,2026-02-03T09:00:00Z,2026-02-03T15:00:00Z,LUBEFLR-NHV-BTU;LUBEFLR-H2S-PCT;LUBEFLR-H2S-PPM,tech,MAINT,techops,2026-02-03T09:15:00Z,GC maintenance — single instrument feeds all three channels,GC restored 15:00,
