@@ -144,6 +144,35 @@ class PullWindow:
 
 
 @dataclass
+class AdjudicatedCondition:
+    """Step 6 output: adjudicated_condition.csv — the push target,
+    structurally distinct from the pull source (the detection condition).
+    One row per folded episode (fold.Observation), regardless of status —
+    the push target is the full adjudicated record, not filtered to
+    currently-active tickets (run.py assembles this; see its module
+    docstring for the flagged scope/shape choices)."""
+    Analyzer: str
+    ConditionStartUTC: datetime
+    ConditionEndUTC: datetime
+    Status: str
+    ReasonCode: str
+    RuleApplied: List[str]      # distinct branch labels observed across the episode's hours
+    SourceEventIDs: List[str]
+
+
+@dataclass
+class PIPayloadRow:
+    """Step 6 output: pi_payload.csv — dense hourly, full window every run,
+    replace-in-place semantics. Value is nullable: valid/invalid map to
+    1.0/0.0, but NOT-OPERATING and NOT-ASSESSED have no agreed numeric
+    encoding yet (tangled with the open NOT-ASSESSED rollup hard stop) —
+    left blank rather than guessing. See run.py."""
+    Tag: str
+    HourStartUTC: datetime
+    Value: Optional[float]
+
+
+@dataclass
 class SiteConfig:
     SiteTimeZoneIANA: str
     LookbackMonths: int
@@ -338,4 +367,47 @@ def write_grid(path: Path, cells: List[GridCell]) -> None:
                 "Valid": c.Valid.value,
                 "RuleApplied": c.RuleApplied,
                 "ContributingEventIDs": ";".join(c.ContributingEventIDs),
+            })
+
+
+# ---------------------------------------------------------------------------
+# Step 6 output writers
+# ---------------------------------------------------------------------------
+
+_ADJUDICATED_CONDITION_HEADERS = [
+    "Analyzer", "ConditionStartUTC", "ConditionEndUTC", "Status",
+    "ReasonCode", "RuleApplied", "SourceEventIDs",
+]
+
+
+def write_adjudicated_condition(path: Path, rows: List[AdjudicatedCondition]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=_ADJUDICATED_CONDITION_HEADERS)
+        w.writeheader()
+        for r in rows:
+            w.writerow({
+                "Analyzer": r.Analyzer,
+                "ConditionStartUTC": r.ConditionStartUTC.isoformat(),
+                "ConditionEndUTC": r.ConditionEndUTC.isoformat(),
+                "Status": r.Status,
+                "ReasonCode": r.ReasonCode,
+                "RuleApplied": ";".join(r.RuleApplied),
+                "SourceEventIDs": ";".join(r.SourceEventIDs),
+            })
+
+
+_PI_PAYLOAD_HEADERS = ["Tag", "HourStartUTC", "Value"]
+
+
+def write_pi_payload(path: Path, rows: List[PIPayloadRow]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=_PI_PAYLOAD_HEADERS)
+        w.writeheader()
+        for r in rows:
+            w.writerow({
+                "Tag": r.Tag,
+                "HourStartUTC": r.HourStartUTC.isoformat(),
+                "Value": "" if r.Value is None else r.Value,
             })

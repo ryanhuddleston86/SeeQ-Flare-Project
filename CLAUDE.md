@@ -10,6 +10,39 @@ Prior art: `list_c_recalc.py` — pure-fold spike (8/8 tests); extends into `cle
 
 One module at a time. Tests green before moving to the next. Log the stopping point at each boundary.
 
+## Run module (Ryan, 2026-07-02) — Step 6, full synthetic green
+
+- The clerk never writes to the ledger (delta.py's own docstring):
+  tonight's grid/diff/digest reflect the EXISTING `events.csv` only;
+  `delta.new_events` are proposals for the external bridge to append,
+  picked up on the NEXT run — never folded into tonight's own grid.
+- Three flagged, non-blocking interpretive choices to hit tonight's
+  green target (none touch a §5 hard-stop category):
+  1. **Run window from LookbackMonths:** `_months_before` snaps to the 1st
+     of the month N months back — not exact day-for-day, sidesteps
+     end-of-month clamping. Used VERBATIM from config (8, in the synthetic
+     fixture) rather than shrunk for convenience, even though most of the
+     resulting window predates any `operating.csv` data and renders as a
+     large block of correct-but-trivial NOT-OPERATING rows (~30k of the
+     ~37k synthetic grid rows).
+  2. **`adjudicated_condition.csv` shape:** the spec's field list has no
+     explicit start/end, but "one capsule per episode" structurally
+     implies bounds — added `ConditionStartUTC`/`ConditionEndUTC`.
+     `RuleApplied` is the sorted set of DISTINCT branch labels observed
+     across the episode's hours (an episode can span multiple branches),
+     not one reduced value. Rows emitted for EVERY folded Observation
+     regardless of status — read as the full adjudicated record, not
+     filtered to active tickets.
+  3. **`pi_payload.csv` Value encoding:** valid/invalid → 1.0/0.0.
+     NOT-OPERATING and NOT-ASSESSED are left BLANK rather than assigned a
+     number — NOT-ASSESSED's encoding is directly entangled with the
+     open NOT-ASSESSED rollup hard stop; inventing a number here would
+     silently resolve it. `Tag` = `Analyzer` 1:1 (no real PI tag-mapping
+     table exists yet).
+- See the SeeqCovered/NOT-ASSESSED section below for the material finding
+  this run surfaced (Confirmed-but-uncovered → NOT-ASSESSED) — a new hard
+  stop, not fixed here.
+
 ## Hard stops (§5) — surface to Ryan and wait
 
 - Any conflict between pasted eCFR verbatim text and spec paraphrase
@@ -142,6 +175,25 @@ One module at a time. Tests green before moving to the next. Log the stopping po
 - **HARD STOP (open):** how NOT-ASSESSED rolls into availability% or the DAR
   denominator is undecided — flag and wait for Ryan; nothing downstream may
   interpret the state.
+- **HARD STOP (new, surfaced by run.py's first full end-to-end pass,
+  2026-07-02):** a legitimately CONFIRMED downtime episode on an uncovered
+  analyzer renders as `NOT-ASSESSED`, not invalid. Concretely: CEMS-001
+  (SeeqCovered=false) fixture rows E001 (SeeqDetection) → E002
+  (Confirmation), Jan 15 14:00–18:00Z — a human directly confirmed this
+  downtime — shows `NOT-ASSESSED` in `grid.csv` for all four hours,
+  because Confirmation doesn't route through branch 4 (only TechEntry-
+  origin windows feed `manual_qa_windows`; a Confirmed SeeqDetection
+  observation feeds `detected_invalid_windows`, which never triggers, only
+  subtracts) and branch 5 is coverage-gated. This is a faithful, consistent
+  execution of the SeeqCovered ruling and the manual/detected split as
+  written — not a code defect — but it is a real, material consequence
+  that wasn't examined when those rulings were made in isolation. This is
+  exactly a "fail-safe polarity vs. rule reading" conflict per §5: a
+  human-confirmed fact arguably should never be able to render as
+  "couldn't assess," regardless of coverage. NOT fixed here — no rule-
+  engine or grid.py code was changed to address it; surfacing for Ryan's
+  ruling alongside the existing NOT-ASSESSED rollup hard stop above (the
+  two are likely resolved together).
 
 ## Fold module (Ryan, 2026-07-02)
 
