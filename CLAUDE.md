@@ -17,11 +17,31 @@ One module at a time. Tests green before moving to the next. Log the stopping po
 - Any case where fail-safe polarity and a rule reading disagree
 - Any temptation to add a status field, edit path, or Seeq-side state
 
+## SeeqCovered + NOT-ASSESSED (Ryan, 2026-07-02)
+
+- `SeeqCovered` (bool) per analyzer in `analyzer_units.csv` — default **false**
+  unless explicitly `true`. Lube Flare's three channels are true; all other
+  fixture analyzers false unless a test needs otherwise.
+- Rule-engine branch 5 (normal-hour quadrant test) may ONLY fire when
+  `SeeqCovered=true`. Uncovered + no branch 2/3/4 claim → `NOT-ASSESSED`
+  (fourth Valid state alongside 0/1/NOT-OPERATING). Branches 2–4 ignore
+  coverage — they never depended on Seeq detection.
+- **HARD STOP (open):** how NOT-ASSESSED rolls into availability% or the DAR
+  denominator is undecided — flag and wait for Ryan; nothing downstream may
+  interpret the state.
+
 ## Rules module
 
 Fetch 40 CFR 60.13(h)(2) verbatim from eCFR before implementing any branch.
 Paste the text into each branch docstring — then **pause for Ryan to review** before writing the branch logic.
 Each `[VERIFY]` marker in the spec is a hard stop: paste text, re-derive vectors, reconcile before coding.
+
+**BLOCKED 2026-07-02:** this environment's network policy denies
+`www.ecfr.gov` (proxy CONNECT 403). `rules.py` exists as a routing skeleton —
+branch verdicts raise `NotImplementedError` until the verbatim text arrives
+(policy allowlist change, or Ryan pastes the text into the session). Branch
+precedence in the skeleton is provisional and still `[VERIFY]` vs. the
+(h)(2) chapeau.
 
 ## Domain facts — lube flare (from `docs/13_LubeFlare_Seeq_Condition_Notes.md`)
 

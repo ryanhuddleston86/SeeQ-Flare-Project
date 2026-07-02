@@ -44,6 +44,11 @@ class CellValid(str, Enum):
     valid        = "1"
     invalid      = "0"
     not_operating = "NOT-OPERATING"
+    # SeeqCovered=false and no branch 2/3/4 claims the hour: detection-based
+    # assessment is impossible, and pretending otherwise would fabricate
+    # validity. How NOT-ASSESSED rolls into availability% / the DAR
+    # denominator is UNDECIDED — hard stop per §5; flagged, awaiting Ryan.
+    not_assessed = "NOT-ASSESSED"
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +103,10 @@ class OperatingWindow:
 class AnalyzerUnit:
     Analyzer: str
     Unit: str
+    # Whether Seeq detection actually covers this analyzer. Fail-safe default
+    # is false: only an explicit "true" in the fixture enables the rule
+    # engine's normal-hour branch (5) for the analyzer.
+    SeeqCovered: bool = False
 
 
 @dataclass
@@ -193,7 +202,13 @@ def read_analyzer_units(path: Path) -> List[AnalyzerUnit]:
     rows: List[AnalyzerUnit] = []
     with open(path, newline="") as f:
         for r in csv.DictReader(f):
-            rows.append(AnalyzerUnit(Analyzer=r["Analyzer"], Unit=r["Unit"]))
+            rows.append(AnalyzerUnit(
+                Analyzer=r["Analyzer"],
+                Unit=r["Unit"],
+                # default false unless explicitly marked true — missing column
+                # or blank cell means NOT covered
+                SeeqCovered=(r.get("SeeqCovered") or "").strip().lower() == "true",
+            ))
     return rows
 
 

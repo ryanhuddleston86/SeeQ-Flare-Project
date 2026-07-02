@@ -189,6 +189,28 @@ def test_all_three_lube_channels_map_to_lube_flare_unit():
     assert lube == {"LUBEFLR-NHV-BTU", "LUBEFLR-H2S-PCT", "LUBEFLR-H2S-PPM"}
 
 
+def test_seeq_covered_true_only_for_lube_channels():
+    units = read_analyzer_units(FIXTURES / "analyzer_units.csv")
+    covered = {u.Analyzer for u in units if u.SeeqCovered}
+    assert covered == {"LUBEFLR-NHV-BTU", "LUBEFLR-H2S-PCT", "LUBEFLR-H2S-PPM"}
+
+
+def test_seeq_covered_defaults_false_when_column_absent(tmp_path):
+    """Fail-safe default: a fixture without the column means NOT covered."""
+    p = tmp_path / "analyzer_units.csv"
+    p.write_text("Analyzer,Unit\nX-1,U-1\n")
+    units = read_analyzer_units(p)
+    assert units[0].SeeqCovered is False
+
+
+def test_seeq_covered_blank_and_junk_are_false(tmp_path):
+    p = tmp_path / "analyzer_units.csv"
+    p.write_text("Analyzer,Unit,SeeqCovered\nX-1,U-1,\nX-2,U-1,yes\nX-3,U-1,TRUE\n")
+    units = {u.Analyzer: u.SeeqCovered for u in read_analyzer_units(p)}
+    assert units == {"X-1": False, "X-2": False, "X-3": True}, \
+        "only an explicit true (case-insensitive) enables coverage"
+
+
 # ---------------------------------------------------------------------------
 # QA windows
 # ---------------------------------------------------------------------------
@@ -307,6 +329,22 @@ def test_grid_write_creates_parent_dirs(tmp_path):
 # ---------------------------------------------------------------------------
 # Pull windows (spec open item 7 — withdrawal scoping input)
 # ---------------------------------------------------------------------------
+
+def test_not_assessed_round_trips_through_grid_csv(tmp_path):
+    cell = GridCell(
+        Analyzer="CEMS-001",
+        HourStartUTC=datetime(2026, 1, 15, 14, 0, 0, tzinfo=tz.utc),
+        HourLocalLabel="2026-01-15 09:00 EST",
+        OperatingFraction=1.0,
+        Valid=CellValid.not_assessed,
+        RuleApplied="not-assessed:no-seeq-coverage",
+        ContributingEventIDs=[],
+    )
+    p = tmp_path / "grid.csv"
+    write_grid(p, [cell])
+    back = read_grid(p)
+    assert back[0].Valid is CellValid.not_assessed
+
 
 def test_read_pull_windows():
     windows = read_pull_windows(FIXTURES / "pull_windows.csv")
