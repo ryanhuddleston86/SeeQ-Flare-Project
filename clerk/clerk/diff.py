@@ -267,6 +267,10 @@ def diff_grids(
         if current is None:
             continue
         if prior.Valid is CellValid.invalid and current.Valid is CellValid.valid:
+            # Trace (including the capsule-provenance silent-pass check) runs
+            # ONLY on an actual invalid->valid flip, never on a cell that is
+            # currently invalid — a still-invalid cell (flipped or not) is
+            # never passed to _trace_flip at all.
             flip = _trace_flip(analyzer, hour_start, prior.ContributingEventIDs,
                                observations_by_origin, events_by_id, current_capsule_ids)
             {
