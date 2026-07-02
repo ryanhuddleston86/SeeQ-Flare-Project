@@ -23,6 +23,23 @@ Fetch 40 CFR 60.13(h)(2) verbatim from eCFR before implementing any branch.
 Paste the text into each branch docstring — then **pause for Ryan to review** before writing the branch logic.
 Each `[VERIFY]` marker in the spec is a hard stop: paste text, re-derive vectors, reconcile before coding.
 
+## Domain facts — lube flare (from `docs/13_LubeFlare_Seeq_Condition_Notes.md`)
+
+- One GC instrument feeds all three lube flare channels (LUBEFLR-NHV-BTU,
+  LUBEFLR-H2S-PCT, LUBEFLR-H2S-PPM). Maintenance on one usually downs all three.
+- Per-channel windows still diverge for the same physical event — that is
+  **correct**; each analyzer's grid is its own compliance fact.
+  **NEVER correlate or merge capsules across analyzers.** One physical event may
+  produce multiple tickets; the delta writer stays per analyzer + class.
+- A manual event listing multiple CEMIDs contributes its window to every listed
+  analyzer's union (spec Step 4).
+- `DetectionClass` is an **opaque matching key**, not an enum — real exports use
+  `legacy-blended`; never branch on its value.
+- Upstream max capsule duration is 2 h — long outages arrive as abutting
+  fragments. The delta writer's merge path runs on night one, not as an edge case.
+- Real data (`clerk/fixtures/real/`) feeds the §6 smoke test only. Synthetic
+  fixtures remain the test basis; never fit code to the real file's quirks.
+
 ## Repository shape
 
 ```

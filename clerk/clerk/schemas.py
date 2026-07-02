@@ -34,9 +34,10 @@ class EventType(str, Enum):
     Superseded         = "Superseded"
 
 
-class DetectionClass(str, Enum):
-    status_offline           = "status-offline"
-    failed_daily_validation  = "failed-daily-validation"
+# DetectionClass is an OPAQUE matching key, not an enum: the delta writer matches
+# per analyzer + class and never interprets the value. Known values so far:
+# "status-offline", "failed-daily-validation", "legacy-blended" (demo-seed export).
+DetectionClass = str
 
 
 class CellValid(str, Enum):
@@ -158,7 +159,7 @@ def read_capsules(path: Path) -> List[Capsule]:
         for r in csv.DictReader(f):
             rows.append(Capsule(
                 Analyzer=r["Analyzer"],
-                DetectionClass=DetectionClass(r["DetectionClass"]),
+                DetectionClass=r["DetectionClass"],
                 CapsuleStartUTC=_dt(r["CapsuleStartUTC"]),
                 CapsuleEndUTC=_dt(r["CapsuleEndUTC"]),
             ))

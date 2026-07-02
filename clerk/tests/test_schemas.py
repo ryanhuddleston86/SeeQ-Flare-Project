@@ -9,7 +9,6 @@ import pytest
 from clerk.schemas import (
     AnalyzerUnit,
     CellValid,
-    DetectionClass,
     EventType,
     GridCell,
     read_analyzer_units,
@@ -52,9 +51,12 @@ def test_event_type_enum_all_values(value):
     assert EventType(value).value == value
 
 
-def test_detection_class_enum_all_values():
-    assert DetectionClass("status-offline") is DetectionClass.status_offline
-    assert DetectionClass("failed-daily-validation") is DetectionClass.failed_daily_validation
+def test_detection_class_is_opaque_string(capsules):
+    """DetectionClass is a matching key, not an enum — unknown values must parse."""
+    classes = {c.DetectionClass for c in capsules}
+    assert "legacy-blended" in classes, "opaque class from real exports must survive parsing"
+    for c in capsules:
+        assert isinstance(c.DetectionClass, str)
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +64,7 @@ def test_detection_class_enum_all_values():
 # ---------------------------------------------------------------------------
 
 def test_read_events_count(events):
-    assert len(events) == 8
+    assert len(events) == 9
 
 
 def test_read_events_types_correct(events):
@@ -138,12 +140,7 @@ def test_single_analyzer_cemid_is_list_of_one(events):
 # ---------------------------------------------------------------------------
 
 def test_read_capsules_count(capsules):
-    assert len(capsules) == 4
-
-
-def test_read_capsules_detection_class_enum(capsules):
-    for c in capsules:
-        assert isinstance(c.DetectionClass, DetectionClass)
+    assert len(capsules) == 10
 
 
 def test_read_capsules_timestamps_utc_aware(capsules):
@@ -153,10 +150,10 @@ def test_read_capsules_timestamps_utc_aware(capsules):
         assert c.CapsuleStartUTC < c.CapsuleEndUTC
 
 
-def test_read_capsules_both_detection_classes_present(capsules):
+def test_read_capsules_known_detection_classes_present(capsules):
     classes = {c.DetectionClass for c in capsules}
-    assert DetectionClass.status_offline in classes
-    assert DetectionClass.failed_daily_validation in classes
+    assert "status-offline" in classes
+    assert "failed-daily-validation" in classes
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +162,7 @@ def test_read_capsules_both_detection_classes_present(capsules):
 
 def test_read_operating():
     windows = read_operating(FIXTURES / "operating.csv")
-    assert len(windows) == 2
+    assert len(windows) == 3
     for w in windows:
         assert w.StartUTC < w.EndUTC
         assert w.StartUTC.tzinfo is not None
@@ -173,15 +170,22 @@ def test_read_operating():
 
 def test_read_analyzer_units():
     units = read_analyzer_units(FIXTURES / "analyzer_units.csv")
-    assert len(units) == 3
+    assert len(units) == 6
     analyzers = {u.Analyzer for u in units}
-    assert {"CEMS-001", "CEMS-002", "CEMS-003"} == analyzers
+    assert {"CEMS-001", "CEMS-002", "CEMS-003",
+            "LUBEFLR-NHV-BTU", "LUBEFLR-H2S-PCT", "LUBEFLR-H2S-PPM"} == analyzers
 
 
-def test_analyzer_units_both_units_present():
+def test_analyzer_units_all_units_present():
     units = read_analyzer_units(FIXTURES / "analyzer_units.csv")
     unit_names = {u.Unit for u in units}
-    assert {"UNIT-A", "UNIT-B"} == unit_names
+    assert {"UNIT-A", "UNIT-B", "LUBE_FLARE"} == unit_names
+
+
+def test_all_three_lube_channels_map_to_lube_flare_unit():
+    units = read_analyzer_units(FIXTURES / "analyzer_units.csv")
+    lube = {u.Analyzer for u in units if u.Unit == "LUBE_FLARE"}
+    assert lube == {"LUBEFLR-NHV-BTU", "LUBEFLR-H2S-PCT", "LUBEFLR-H2S-PPM"}
 
 
 # ---------------------------------------------------------------------------
@@ -297,3 +301,61 @@ def test_grid_write_creates_parent_dirs(tmp_path):
     deep = tmp_path / "out" / "2026-01-15" / "grid.csv"
     write_grid(deep, cells)
     assert deep.exists()
+
+
+# ---------------------------------------------------------------------------
+# Lube flare pattern — one physical event, three per-channel compliance facts
+# ---------------------------------------------------------------------------
+
+LUBE_CHANNELS = {"LUBEFLR-NHV-BTU", "LUBEFLR-H2S-PCT", "LUBEFLR-H2S-PPM"}
+
+
+def _lube_capsules(capsules):
+    return [c for c in capsules if c.Analyzer in LUBE_CHANNELS]
+
+
+def test_three_channel_outage_windows_diverge(capsules):
+    """Same physical event, different per-channel totals — this is correct and
+    must never be 'fixed' by cross-analyzer correlation or merging."""
+    def total_hours(analyzer):
+        return sum(
+            (c.CapsuleEndUTC - c.CapsuleStartUTC).total_seconds() / 3600
+            for c in _lube_capsules(capsules) if c.Analyzer == analyzer
+        )
+    assert total_hours("LUBEFLR-NHV-BTU") == pytest.approx(5.0)
+    assert total_hours("LUBEFLR-H2S-PCT") == pytest.approx(17.0)
+    assert total_hours("LUBEFLR-H2S-PPM") == pytest.approx(17.0)
+
+
+def test_abutting_fragments_present(capsules):
+    """Upstream max capsule duration is 2 h — abutting fragments (end == next
+    start) are the norm. The fixture must contain at least one abutting pair."""
+    h2s = sorted(
+        (c for c in _lube_capsules(capsules) if c.Analyzer == "LUBEFLR-H2S-PCT"),
+        key=lambda c: c.CapsuleStartUTC,
+    )
+    abutting = any(
+        a.CapsuleEndUTC == b.CapsuleStartUTC for a, b in zip(h2s, h2s[1:])
+    )
+    assert abutting, "fixture must contain abutting fragments for the merge path"
+
+
+def test_btu_fragments_have_a_gap_not_abutment(capsules):
+    """BTU's two fragments are separated — divergence is per-channel, not shared."""
+    btu = sorted(
+        (c for c in _lube_capsules(capsules) if c.Analyzer == "LUBEFLR-NHV-BTU"),
+        key=lambda c: c.CapsuleStartUTC,
+    )
+    assert len(btu) == 2
+    assert btu[0].CapsuleEndUTC < btu[1].CapsuleStartUTC
+
+
+def test_tech_entry_lists_all_three_lube_cemids(events):
+    multi = [
+        e for e in events
+        if e.EventType == EventType.TechEntry and set(e.AnalyzerCEMIDs) == LUBE_CHANNELS
+    ]
+    assert len(multi) == 1, "exactly one TechEntry must list all three lube CEMIDs"
+    e = multi[0]
+    assert e.ExtentStartUTC is not None and e.ExtentEndUTC is not None
+    assert e.ExtentStartUTC < e.ExtentEndUTC
