@@ -68,7 +68,7 @@ class HourContext:
 # Interval arithmetic (pure math, no regulatory content)
 # ---------------------------------------------------------------------------
 
-def _merge(intervals: List[Interval]) -> List[Interval]:
+def merge_intervals(intervals: List[Interval]) -> List[Interval]:
     out: List[Interval] = []
     for s, e in sorted(i for i in intervals if i[0] < i[1]):
         if out and s <= out[-1][1]:
@@ -78,10 +78,10 @@ def _merge(intervals: List[Interval]) -> List[Interval]:
     return out
 
 
-def _subtract(base: List[Interval], minus: List[Interval]) -> List[Interval]:
+def subtract_intervals(base: List[Interval], minus: List[Interval]) -> List[Interval]:
     out: List[Interval] = []
-    minus = _merge(minus)
-    for s, e in _merge(base):
+    minus = merge_intervals(minus)
+    for s, e in merge_intervals(base):
         cur = s
         for ms, me in minus:
             if me <= cur or ms >= e:
@@ -96,13 +96,13 @@ def _subtract(base: List[Interval], minus: List[Interval]) -> List[Interval]:
     return out
 
 
-def _span(intervals: List[Interval]) -> timedelta:
+def interval_span(intervals: List[Interval]) -> timedelta:
     if not intervals:
         return timedelta(0)
     return max(e for _, e in intervals) - min(s for s, _ in intervals)
 
 
-def _overlaps_interval(intervals: List[Interval], lo: datetime, hi: datetime) -> bool:
+def intervals_overlap(intervals: List[Interval], lo: datetime, hi: datetime) -> bool:
     return any(s < hi and lo < e for s, e in intervals)
 
 
@@ -111,7 +111,7 @@ def quadrants_operated(ctx: HourContext) -> Set[int]:
     out: Set[int] = set()
     for q in range(4):
         q_start = ctx.hour_start + timedelta(minutes=15 * q)
-        if _overlaps_interval(ctx.operating, q_start, q_start + _FIFTEEN_MIN):
+        if intervals_overlap(ctx.operating, q_start, q_start + _FIFTEEN_MIN):
             out.add(q)
     return out
 
@@ -123,7 +123,7 @@ def _valid_time(ctx: HourContext, after: Optional[datetime] = None) -> List[Inte
     base = ctx.operating
     if after is not None:
         base = [(max(s, after), e) for s, e in base if e > after]
-    return _subtract(base, ctx.manual_qa_windows + ctx.detected_invalid_windows)
+    return subtract_intervals(base, ctx.manual_qa_windows + ctx.detected_invalid_windows)
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +142,7 @@ def _iii_requirements(valid: List[Interval], operated_quadrants: int) -> bool:
     # data point exists arbitrarily close to any instant of validity) — a
     # deliberate implementation choice, not a silent substitution; see the
     # equivalence note in docs/14 and the narrow-sliver boundary test.
-    return _span(valid) >= _FIFTEEN_MIN
+    return interval_span(valid) >= _FIFTEEN_MIN
 
 
 def _branch_iv(ctx: HourContext) -> Tuple[CellValid, str]:
@@ -211,11 +211,11 @@ def _branch_normal(ctx: HourContext) -> Tuple[CellValid, str]:
     valid = _valid_time(ctx)
     quads = quadrants_operated(ctx)
     # "full operating hour (any clock hour with 60 minutes of unit operation)"
-    operated = sum((e - s for s, e in _merge(ctx.operating)), timedelta(0))
+    operated = sum((e - s for s, e in merge_intervals(ctx.operating)), timedelta(0))
     full_hour = operated >= timedelta(minutes=60)
     for q in quads:
         q_start = ctx.hour_start + timedelta(minutes=15 * q)
-        if not _overlaps_interval(valid, q_start, q_start + _FIFTEEN_MIN):
+        if not intervals_overlap(valid, q_start, q_start + _FIFTEEN_MIN):
             return CellValid.invalid, "(i)" if full_hour else "(ii)"
     return CellValid.valid, "(i)" if full_hour else "(ii)"
 

@@ -17,6 +17,43 @@ One module at a time. Tests green before moving to the next. Log the stopping po
 - Any case where fail-safe polarity and a rule reading disagree
 - Any temptation to add a status field, edit path, or Seeq-side state
 
+## Grid module (Ryan, 2026-07-02)
+
+- Union = live detections (`capsules.csv`) ∪ folded windows ∪ QA windows,
+  minus signed-dismissal extents where a live capsule still matches
+  (jitter tolerance) — subtracts exactly the *signed* interval, never the
+  capsule's own wider one, so excess beyond it stays invalid automatically.
+- Folded windows split by ORIGIN type: TechEntry → `manual_qa_windows`
+  (branch-4 trigger, joined by `qa_windows.csv`); SeeqDetection →
+  `detected_invalid_windows` (subtract-only, never a trigger).
+- `contributing_observation_windows` is the direct, independently tested
+  implementation of Guarantee A (fold.py handoff) — every status except
+  Dismissed/Withdrawn/Superseded contributes identically; nothing
+  downstream may re-narrow it to "only Confirmed counts."
+- The signed-dismissal subtraction only ever touches
+  `detected_invalid_windows` — folded windows are already Guarantee-A-
+  filtered (Dismissed contributes nothing there already), but capsules are
+  ticket-status-agnostic by design, so they need the explicit subtraction.
+- **Grid's own correctness guard (not explicitly requested, added because
+  its absence is a real bug):** only SeeqDetection-origin Dismissed
+  observations feed the subtraction list — TechEntry-origin dismissals
+  have no capsule counterpart and must not cancel an unrelated ticket's
+  detected time at the same analyzer.
+- **Flagged, not blocking:** capsule-match for the subtraction is
+  analyzer-only, not analyzer+DetectionClass (fold.py's `Observation`
+  doesn't carry class). Safe for every current fixture; a real gap if an
+  analyzer ever runs two time-overlapping detection classes concurrently.
+- **Flagged, not blocking:** no daily-calibration event source exists yet
+  — branch (iv) never fires via `build_grid` until that ingestion path is
+  defined.
+- Operating gate confirmed source-agnostic per spec: `OperatingWindow`
+  carries no "how do we know this" field, so Lube Flare's manual-capsule-
+  sourced operating signal and a continuous-signal unit hit the identical
+  code path. No fixture or code changes needed for this.
+- Fixture sweep (Ryan's ask, same session): confirmed E005 was the only
+  chain-walking violation in `events.csv` — every other `TargetEventID`
+  already referenced its observation's origin directly.
+
 ## SeeqCovered + NOT-ASSESSED (Ryan, 2026-07-02)
 
 - `SeeqCovered` (bool) per analyzer in `analyzer_units.csv` — default **false**
