@@ -1,0 +1,5 @@
+Analyzer,DetectionClass,CapsuleStartUTC,CapsuleEndUTC
+CEMS-001,status-offline,2026-01-15T14:00:00Z,2026-01-15T18:00:00Z
+CEMS-001,failed-daily-validation,2026-01-20T08:00:00Z,2026-01-20T12:00:00Z
+CEMS-002,status-offline,2026-01-25T10:00:00Z,2026-01-25T14:00:00Z
+CEMS-001,status-offline,2026-01-28T06:00:00Z,2026-01-28T10:00:00Z

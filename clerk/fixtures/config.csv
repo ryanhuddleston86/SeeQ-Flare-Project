@@ -1,0 +1,7 @@
+key,value
+SiteTimeZoneIANA,America/New_York
+LookbackMonths,8
+LateXThresholdDays,7
+JitterToleranceMin,5
+PartialOperatingHourApplicability:MATS,false
+PartialOperatingHourApplicability:NSPS,true
