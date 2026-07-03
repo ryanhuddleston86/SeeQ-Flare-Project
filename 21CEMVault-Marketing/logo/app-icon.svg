@@ -1,0 +1,15 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>CEMVault app icon — full-bleed navy, 512×512</title>
+  <rect width="512" height="512" rx="112" fill="#0F2438"></rect>
+  <g transform="translate(157 157) scale(2.917)">
+    <rect x="0" y="0" width="18" height="18" rx="3" fill="#EDEFF2"></rect>
+    <rect x="25" y="0" width="18" height="18" rx="3" fill="#EDEFF2"></rect>
+    <rect x="50" y="0" width="18" height="18" rx="3" fill="#EDEFF2"></rect>
+    <rect x="0" y="25" width="18" height="18" rx="3" fill="#EDEFF2"></rect>
+    <rect x="25" y="25" width="18" height="18" rx="3" fill="#EDEFF2"></rect>
+    <rect x="50" y="25" width="18" height="18" rx="3" fill="#EDEFF2"></rect>
+    <rect x="0" y="50" width="18" height="18" rx="3" fill="#EDEFF2"></rect>
+    <rect x="25" y="50" width="18" height="18" rx="3" fill="#EDEFF2"></rect>
+    <rect x="50" y="50" width="18" height="18" rx="3" fill="#E08E2B"></rect>
+  </g>
+</svg>

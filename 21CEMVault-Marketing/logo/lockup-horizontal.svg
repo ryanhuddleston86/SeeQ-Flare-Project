@@ -1,0 +1,19 @@
+<svg width="360" height="96" viewBox="0 0 360 96" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>CEMVault horizontal lockup — for light backgrounds</title>
+  <defs>
+    
+  </defs>
+  <g transform="translate(0 12)">
+    <rect x="1.5" y="1.5" width="69" height="69" rx="12" stroke="#0F2438" stroke-width="2.4"></rect>
+    <rect x="11" y="11" width="13.5" height="13.5" rx="2.3" fill="#0F2438"></rect>
+    <rect x="29.75" y="11" width="13.5" height="13.5" rx="2.3" fill="#0F2438"></rect>
+    <rect x="48.5" y="11" width="13.5" height="13.5" rx="2.3" fill="#0F2438"></rect>
+    <rect x="11" y="29.75" width="13.5" height="13.5" rx="2.3" fill="#0F2438"></rect>
+    <rect x="29.75" y="29.75" width="13.5" height="13.5" rx="2.3" fill="#0F2438"></rect>
+    <rect x="48.5" y="29.75" width="13.5" height="13.5" rx="2.3" fill="#0F2438"></rect>
+    <rect x="11" y="48.5" width="13.5" height="13.5" rx="2.3" fill="#0F2438"></rect>
+    <rect x="29.75" y="48.5" width="13.5" height="13.5" rx="2.3" fill="#0F2438"></rect>
+    <rect x="48.5" y="48.5" width="13.5" height="13.5" rx="2.3" fill="#E08E2B"></rect>
+  </g>
+  <text x="92" y="48" dominant-baseline="central" font-family="&#39;Space Grotesk&#39;, sans-serif" font-size="44" letter-spacing="-0.5"><tspan fill="#0F2438" font-weight="700">CEM</tspan><tspan fill="#E08E2B" font-weight="500">Vault</tspan></text>
+</svg>

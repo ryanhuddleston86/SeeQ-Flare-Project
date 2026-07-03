@@ -1,0 +1,14 @@
+<svg width="1500" height="500" viewBox="0 0 1500 500" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>CEMVault X / Twitter header — 1500×500</title>
+  <defs></defs>
+  <rect width="1500" height="500" fill="#0F2438"></rect>
+  <rect y="497" width="1500" height="3" fill="#E08E2B"></rect>
+  <g transform="translate(120 175) scale(1.56)">
+    <rect x="1.5" y="1.5" width="93" height="93" rx="16" stroke="#EDEFF2" stroke-width="3"></rect>
+    <rect x="14" y="14" width="18" height="18" rx="3" fill="#EDEFF2"></rect><rect x="39" y="14" width="18" height="18" rx="3" fill="#EDEFF2"></rect><rect x="64" y="14" width="18" height="18" rx="3" fill="#EDEFF2"></rect>
+    <rect x="14" y="39" width="18" height="18" rx="3" fill="#EDEFF2"></rect><rect x="39" y="39" width="18" height="18" rx="3" fill="#EDEFF2"></rect><rect x="64" y="39" width="18" height="18" rx="3" fill="#EDEFF2"></rect>
+    <rect x="14" y="64" width="18" height="18" rx="3" fill="#EDEFF2"></rect><rect x="39" y="64" width="18" height="18" rx="3" fill="#EDEFF2"></rect><rect x="64" y="64" width="18" height="18" rx="3" fill="#E08E2B"></rect>
+  </g>
+  <text x="330" y="235" font-family="&#39;Space Grotesk&#39;, sans-serif" font-size="80" letter-spacing="-1"><tspan fill="#EDEFF2" font-weight="700">CEM</tspan><tspan fill="#E08E2B" font-weight="500">Vault</tspan></text>
+  <text x="333" y="298" font-family="&#39;Space Grotesk&#39;, sans-serif" font-size="32" font-weight="400" fill="#8CA0B3">Audit-ready continuous emissions monitoring for refineries.</text>
+</svg>

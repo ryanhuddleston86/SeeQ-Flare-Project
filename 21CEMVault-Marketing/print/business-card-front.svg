@@ -1,0 +1,12 @@
+<svg width="1050" height="600" viewBox="0 0 1050 600" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>CEMVault business card — front (3.5×2in @300dpi)</title>
+  <defs></defs>
+  <rect width="1050" height="600" fill="#0F2438"></rect>
+  <g transform="translate(390 150) scale(3)">
+    <rect x="1.5" y="1.5" width="93" height="93" rx="16" stroke="#EDEFF2" stroke-width="3"></rect>
+    <rect x="14" y="14" width="18" height="18" rx="3" fill="#EDEFF2"></rect><rect x="39" y="14" width="18" height="18" rx="3" fill="#EDEFF2"></rect><rect x="64" y="14" width="18" height="18" rx="3" fill="#EDEFF2"></rect>
+    <rect x="14" y="39" width="18" height="18" rx="3" fill="#EDEFF2"></rect><rect x="39" y="39" width="18" height="18" rx="3" fill="#EDEFF2"></rect><rect x="64" y="39" width="18" height="18" rx="3" fill="#EDEFF2"></rect>
+    <rect x="14" y="64" width="18" height="18" rx="3" fill="#EDEFF2"></rect><rect x="39" y="64" width="18" height="18" rx="3" fill="#EDEFF2"></rect><rect x="64" y="64" width="18" height="18" rx="3" fill="#E08E2B"></rect>
+  </g>
+  <text x="525" y="470" text-anchor="middle" font-family="&#39;Space Grotesk&#39;, sans-serif" font-size="58" letter-spacing="-1"><tspan fill="#EDEFF2" font-weight="700">CEM</tspan><tspan fill="#E08E2B" font-weight="500">Vault</tspan></text>
+</svg>
