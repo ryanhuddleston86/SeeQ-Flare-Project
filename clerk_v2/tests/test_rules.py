@@ -312,6 +312,24 @@ def test_w5_14min_separation_is_invalid():
     assert (verdict, rule) == (CellValid.invalid, "(iii)(A)")
 
 
+def test_w5_17min_separation_is_valid_discriminator_against_30min_bug():
+    """F1 discriminator: a 17-min valid span is VALID under the verbatim
+    (iii)(A) test ("separated by at least 15 minutes"). Under a hypothetical
+    30-minute-span implementation this case would be INVALID — so this test
+    fails on that bug and on nothing else. V = :20–:37 (17 min)."""
+    verdict, rule = evaluate_hour(
+        _ctx(manual_qa_windows=[(_m(0), _m(20)), (_m(37), _m(60))]))
+    assert (verdict, rule) == (CellValid.valid, "(iii)(A)")
+
+
+def test_w5_separation_constant_is_15_minutes():
+    """Pin the executable comparison constant itself: the (iii)(A) test is
+    max(V) − min(V) ≥ 15 min. Guards against a silent constant change that
+    every span-based vector above might accidentally straddle."""
+    from clerk.rules import _FIFTEEN_MIN
+    assert _FIFTEEN_MIN == timedelta(minutes=15)
+
+
 # ---------------------------------------------------------------------------
 # The (iii)(A) literal-vs-interval-algebra boundary (docs/14 equivalence note)
 # ---------------------------------------------------------------------------
