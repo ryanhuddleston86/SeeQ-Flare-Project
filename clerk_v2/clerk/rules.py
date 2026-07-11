@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import List, Optional, Set, Tuple
 
-from clerk.schemas import CellValid
+from clerk.schemas import CellValid, SiteConfig
 
 Interval = Tuple[datetime, datetime]
 
@@ -62,6 +62,11 @@ class HourContext:
     failed_cal_at: Optional[datetime] = None
     # passing calibration instant within the hour, if any (branch 2 verdict input)
     passing_cal_at: Optional[datetime] = None
+    # Pre-resolved CFR paragraph from the config reason→paragraph map (W4).
+    # Set by grid.py via reason_to_paragraph(); None means no override —
+    # _select_paragraph falls through to the auto-selection chain.
+    # FLAG: provisional — mapping table not yet confirmed by Ryan.
+    resolved_paragraph: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -225,27 +230,74 @@ def _branch_normal(ctx: HourContext) -> Tuple[CellValid, str]:
 # (Ryan, 2026-07-02); no longer provisional for branches (i)–(iv)
 # ---------------------------------------------------------------------------
 
-def evaluate_hour(ctx: HourContext) -> Tuple[CellValid, str]:
-    """Route one analyzer × hour to a branch and return its verdict."""
-    # 1. Unit not operating at all in the hour — operational bookkeeping,
-    #    not an (h)(2) reading: excluded from numerator and denominator both.
-    if not ctx.operating:
-        return CellValid.not_operating, "not-operating"
-
-    # 2. Failed daily cal in the hour → branch (iv).
-    if ctx.failed_cal_at is not None:
-        return _branch_iv(ctx)
-
-    # 3. Operates in exactly one quadrant → branch (iii)(B).
-    if len(quadrants_operated(ctx)) == 1:
-        return _branch_iii_b(ctx)
-
-    # 4. Any tech/QA invalid window intersects the hour → branch (iii)(A).
-    #    Coverage-independent: manual evidence never needed Seeq detection.
-    if ctx.manual_qa_windows:
-        return _branch_iii_a(ctx)
-
-    # 5. Normal hour — gated on Seeq coverage.
-    if ctx.seeq_covered:
-        return _branch_normal(ctx)
+def _branch_not_assessed(ctx: HourContext) -> Tuple[CellValid, str]:
+    """SeeqCovered=false with no manual window — detection-based assessment
+    is impossible; verdict is deferred until coverage is established."""
     return CellValid.not_assessed, "not-assessed:no-seeq-coverage"
+
+
+# W4: paragraph-label → branch function (used by _select_paragraph for
+# config-driven reason→paragraph overrides). FLAG: provisional.
+_PARAGRAPH_BRANCH = {
+    "(iv)":     _branch_iv,
+    "(iii)(B)": _branch_iii_b,
+    "(iii)(A)": _branch_iii_a,
+    "(i)":      _branch_normal,
+    "(ii)":     _branch_normal,
+}
+
+
+def reason_to_paragraph(reason: str, config: SiteConfig) -> Optional[str]:
+    """Look up the CFR paragraph label for a reason code from the site config.
+
+    Returns the paragraph string (e.g. "(iii)(A)") if the reason code is
+    mapped, or None if no mapping exists (fall through to auto-selection).
+    FLAG: provisional — ReasonParagraphMap entries not yet confirmed by Ryan.
+    """
+    return config.ReasonParagraphMap.get(reason)
+
+
+def _unit_offline(ctx: HourContext) -> bool:
+    """Step 1 — Unit-offline mask: true when no operating intervals exist.
+    This is operational bookkeeping, not a §(h)(2) reading — an offline unit
+    is excluded from both the numerator and denominator of the data average."""
+    return not ctx.operating
+
+
+def _select_paragraph(ctx: HourContext):
+    """Step 2 — Paragraph selection: return the branch callable that governs
+    this hour. Precedence confirmed against the §60.13(h)(2) chapeau.
+
+    When ctx.resolved_paragraph is set (pre-resolved via reason_to_paragraph
+    by the caller), that paragraph overrides the auto-selection chain.
+    FLAG: provisional — override mapping not yet confirmed by Ryan.
+    """
+    # W4 config-driven override: resolved_paragraph wins when it maps to a branch.
+    if ctx.resolved_paragraph:
+        branch = _PARAGRAPH_BRANCH.get(ctx.resolved_paragraph)
+        if branch is not None:
+            return branch
+    if ctx.failed_cal_at is not None:
+        return _branch_iv
+    if len(quadrants_operated(ctx)) == 1:
+        return _branch_iii_b
+    # Coverage-independent: manual/QA evidence never required Seeq detection.
+    if ctx.manual_qa_windows:
+        return _branch_iii_a
+    if ctx.seeq_covered:
+        return _branch_normal
+    return _branch_not_assessed
+
+
+def evaluate_hour(ctx: HourContext) -> Tuple[CellValid, str]:
+    """Route one analyzer × hour through three explicit steps and return its verdict.
+
+    Step 1 — unit-offline mask  →  Step 2 — paragraph selection  →  Step 3 — verdict fold.
+    """
+    # Step 1: offline mask fires before any §(h)(2) paragraph is consulted.
+    if _unit_offline(ctx):
+        return CellValid.not_operating, "not-operating"
+    # Step 2: choose the governing CFR paragraph.
+    branch = _select_paragraph(ctx)
+    # Step 3: apply the selected branch to obtain (validity, rule).
+    return branch(ctx)

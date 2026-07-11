@@ -11,8 +11,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from clerk.rules import HourContext, evaluate_hour, quadrants_operated
-from clerk.schemas import CellValid
+from clerk.rules import HourContext, _select_paragraph, _unit_offline, evaluate_hour, quadrants_operated, reason_to_paragraph
+from clerk.schemas import CellValid, SiteConfig
 
 HOUR = datetime(2026, 2, 3, 9, 0, tzinfo=timezone.utc)
 
@@ -30,6 +30,75 @@ def _ctx(**kw):
     )
     defaults.update(kw)
     return HourContext(**defaults)
+
+
+# ---------------------------------------------------------------------------
+# D3: unit-offline mask → paragraph selection → verdict fold (W3)
+# ---------------------------------------------------------------------------
+
+def test_offline_mask_fires_before_paragraph_selection():
+    """Unit-offline mask (step 1) must short-circuit before paragraph selection
+    (step 2) even when conditions that would select branch (iv) are present."""
+    ctx = _ctx(operating=[], failed_cal_at=_m(5))
+    assert _unit_offline(ctx) is True, "mask must see the unit as offline"
+    verdict, rule = evaluate_hour(ctx)
+    assert verdict is CellValid.not_operating
+    assert rule == "not-operating"
+
+
+def test_select_paragraph_skips_mask_step():
+    """_select_paragraph never sees an offline unit — evaluate_hour guarantees
+    the mask fires first. Confirm _select_paragraph returns a callable."""
+    ctx = _ctx(seeq_covered=True)  # normal operating hour
+    branch = _select_paragraph(ctx)
+    assert callable(branch)
+
+
+# ---------------------------------------------------------------------------
+# W4: config-driven reason→paragraph mapping
+# ---------------------------------------------------------------------------
+
+def _cfg(**reason_map) -> SiteConfig:
+    return SiteConfig(
+        SiteTimeZoneIANA="America/New_York",
+        LookbackMonths=8,
+        LateXThresholdDays=7,
+        JitterToleranceMin=5,
+        PartialOperatingHourApplicability={},
+        ReasonParagraphMap=dict(reason_map),
+    )
+
+
+def test_reason_to_paragraph_returns_mapped_value():
+    cfg = _cfg(BKD="(iii)(A)", MAINT="(iii)(A)")
+    assert reason_to_paragraph("BKD", cfg) == "(iii)(A)"
+    assert reason_to_paragraph("MAINT", cfg) == "(iii)(A)"
+
+
+def test_reason_to_paragraph_returns_none_for_unknown():
+    cfg = _cfg(BKD="(iii)(A)")
+    assert reason_to_paragraph("UNKNOWN-CODE", cfg) is None
+    assert reason_to_paragraph("", cfg) is None
+
+
+def test_resolved_paragraph_overrides_auto_selection():
+    """ctx.resolved_paragraph wins over auto-selection. An uncovered single-
+    quadrant hour would normally select (iii)(B); pre-resolving to (iii)(A)
+    routes it through the wider separation test instead."""
+    ctx = _ctx(
+        operating=[(_m(50), _m(58))],   # one quadrant → auto would pick (iii)(B)
+        resolved_paragraph="(iii)(A)",
+    )
+    verdict, rule = evaluate_hour(ctx)
+    assert rule == "(iii)(A)", "resolved_paragraph must override the single-quadrant branch"
+
+
+def test_resolved_paragraph_unknown_label_falls_through():
+    """An unrecognised paragraph label in resolved_paragraph is silently
+    ignored — auto-selection takes over rather than crashing."""
+    ctx = _ctx(seeq_covered=True, resolved_paragraph="(xiv)(Z)")
+    verdict, rule = evaluate_hour(ctx)
+    assert rule in {"(i)", "(ii)"}  # normal branch auto-selected
 
 
 # ---------------------------------------------------------------------------

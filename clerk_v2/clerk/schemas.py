@@ -178,6 +178,16 @@ class SiteConfig:
     LateXThresholdDays: int
     JitterToleranceMin: int
     PartialOperatingHourApplicability: Dict[str, bool]
+    # FLAG: provisional — reason→paragraph mapping not yet confirmed by Ryan.
+    # Keys are ReasonCode strings from events.csv; values are CFR paragraph
+    # labels ("(iii)(A)", "(iv)", etc.). Built from ReasonParagraph: rows in
+    # config.csv. An absent reason code produces no override (falls through to
+    # auto-selection in _select_paragraph).
+    ReasonParagraphMap: Dict[str, str] = None  # type: ignore[assignment]
+
+    def __post_init__(self):
+        if self.ReasonParagraphMap is None:
+            self.ReasonParagraphMap = {}
 
 
 # ---------------------------------------------------------------------------
@@ -280,12 +290,19 @@ def read_config(path: Path) -> SiteConfig:
         for k, v in kv.items()
         if k.startswith("PartialOperatingHourApplicability:")
     }
+    # FLAG: provisional — read reason→paragraph defaults from config rows.
+    reason_paragraph = {
+        k.split(":", 1)[1]: v.strip()
+        for k, v in kv.items()
+        if k.startswith("ReasonParagraph:")
+    }
     return SiteConfig(
         SiteTimeZoneIANA=kv["SiteTimeZoneIANA"],
         LookbackMonths=int(kv.get("LookbackMonths", "8")),
         LateXThresholdDays=int(kv.get("LateXThresholdDays", "7")),
         JitterToleranceMin=int(kv.get("JitterToleranceMin", "5")),
         PartialOperatingHourApplicability=partial,
+        ReasonParagraphMap=reason_paragraph,
     )
 
 

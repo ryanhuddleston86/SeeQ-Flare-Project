@@ -5,3 +5,5 @@ LateXThresholdDays,7
 JitterToleranceMin,5
 PartialOperatingHourApplicability:MATS,false
 PartialOperatingHourApplicability:NSPS,true
+ReasonParagraph:BKD,(iii)(A)
+ReasonParagraph:MAINT,(iii)(A)
