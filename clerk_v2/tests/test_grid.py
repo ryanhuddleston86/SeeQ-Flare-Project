@@ -15,6 +15,7 @@ import pytest
 from clerk.fold import Observation, Status
 from clerk.grid import (
     apply_dismissal_subtraction,
+    backdate_to_last_passing,
     build_grid,
     capsule_provenance_id,
     contributing_observation_windows,
@@ -24,6 +25,7 @@ from clerk.schemas import (
     CellValid,
     Event,
     EventType,
+    GridCell,
     read_analyzer_units,
     read_capsules,
     read_config,
@@ -576,3 +578,69 @@ def test_fixture_cems001_dismissed_matched_window_is_excused_from_detected_union
     for s, e in detected.get("CEMS-001", []):
         assert not (s < dismissed_window[1] and dismissed_window[0] < e), \
             "the signed-dismissed, capsule-matched interval must be fully removed"
+
+
+# ---------------------------------------------------------------------------
+# W6 — backdate_to_last_passing (pure function, synthetic grid)
+# ---------------------------------------------------------------------------
+
+def _cell(analyzer, hour_offset_h, valid: CellValid) -> GridCell:
+    base = _utc(2026, 1, 15, 0)
+    hour = base + timedelta(hours=hour_offset_h)
+    return GridCell(
+        Analyzer=analyzer,
+        HourStartUTC=hour,
+        HourLocalLabel="",
+        OperatingFraction=1.0,
+        Valid=valid,
+        RuleApplied="(i)",
+        ContributingEventIDs=[],
+    )
+
+
+def test_backdate_returns_most_recent_valid_hour():
+    grid = [
+        _cell("A1", 0, CellValid.valid),
+        _cell("A1", 1, CellValid.valid),
+        _cell("A1", 2, CellValid.invalid),
+        _cell("A1", 3, CellValid.invalid),
+    ]
+    result = backdate_to_last_passing("A1", grid)
+    assert result == _utc(2026, 1, 15, 1), "must return the latest valid hour, not the first"
+
+
+def test_backdate_returns_none_when_no_valid_cell():
+    grid = [
+        _cell("A1", 0, CellValid.invalid),
+        _cell("A1", 1, CellValid.not_operating),
+    ]
+    assert backdate_to_last_passing("A1", grid) is None
+
+
+def test_backdate_returns_none_for_unknown_analyzer():
+    grid = [_cell("A1", 0, CellValid.valid)]
+    assert backdate_to_last_passing("A2", grid) is None
+
+
+def test_backdate_skips_other_analyzers():
+    grid = [
+        _cell("A1", 0, CellValid.valid),
+        _cell("A1", 1, CellValid.valid),
+        _cell("A2", 5, CellValid.valid),   # later hour, different analyzer
+    ]
+    result = backdate_to_last_passing("A1", grid)
+    assert result == _utc(2026, 1, 15, 1), "must not include cells from other analyzers"
+
+
+def test_backdate_not_operating_does_not_count_as_passing():
+    grid = [
+        _cell("A1", 0, CellValid.valid),
+        _cell("A1", 1, CellValid.not_operating),
+        _cell("A1", 2, CellValid.not_assessed),
+    ]
+    result = backdate_to_last_passing("A1", grid)
+    assert result == _utc(2026, 1, 15, 0), "only CellValid.valid counts as passing"
+
+
+def test_backdate_empty_grid_returns_none():
+    assert backdate_to_last_passing("A1", []) is None

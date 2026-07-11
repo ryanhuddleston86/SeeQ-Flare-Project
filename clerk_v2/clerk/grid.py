@@ -360,3 +360,23 @@ def build_grid(
             ))
             hour += timedelta(hours=1)
     return cells
+
+
+# ---------------------------------------------------------------------------
+# W6 — backdate-to-last-passing
+# ---------------------------------------------------------------------------
+
+def backdate_to_last_passing(analyzer: str, grid: List[GridCell]) -> Optional[datetime]:
+    """Return the HourStartUTC of the most recent CellValid.valid cell for
+    the given analyzer, or None if no valid cell exists.
+
+    Used to determine the latest confirmed-good hour before a downtime
+    window starts — the backdate anchor for an episode's start time.
+    Pure function: no I/O, no mutation.
+    """
+    best: Optional[datetime] = None
+    for cell in grid:
+        if cell.Analyzer == analyzer and cell.Valid is CellValid.valid:
+            if best is None or cell.HourStartUTC > best:
+                best = cell.HourStartUTC
+    return best

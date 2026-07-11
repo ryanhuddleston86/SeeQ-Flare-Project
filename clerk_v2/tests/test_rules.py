@@ -285,18 +285,36 @@ def test_g10_post_cal_data_also_subtracts_other_invalid_windows():
 
 
 # ---------------------------------------------------------------------------
-# The (iii)(A) literal-vs-interval-algebra boundary (docs/14 equivalence note)
+# W5 — real ≥15-min temporal separation, not quadrant-membership proxy
 # ---------------------------------------------------------------------------
 
-def test_iii_a_two_points_seconds_apart_across_quadrants_is_invalid():
-    """The false-valid edge the verbatim text kills: valid data only from
-    :14:30 to :15:30 — points exist in two different quadrants but the
-    maximum separation is 1 minute. A quadrant-membership reading would
-    validate this hour; the separation test correctly does not."""
+def test_w5_falsifying_case_adjacent_quadrants_1min_apart_is_invalid():
+    """W5 falsifying case: valid data only from :14:30 to :15:30.
+    Points exist in two different quadrants (Q0 and Q1) — a quadrant-
+    membership proxy would accept this as satisfying (iii)(A). The real
+    ≥15-min temporal separation test (span = 1 min) correctly rejects it.
+    This is the boundary case D5 requires the implementation to get right."""
     verdict, rule = evaluate_hour(
         _ctx(manual_qa_windows=[(_m(0), _m(14.5)), (_m(15.5), _m(60))]))
     assert (verdict, rule) == (CellValid.invalid, "(iii)(A)")
 
+
+def test_w5_exactly_15min_separation_is_valid():
+    """The boundary from the other side: span exactly 15 min → valid.
+    'separated by AT LEAST 15 minutes' makes the boundary inclusive."""
+    verdict, rule = evaluate_hour(_ctx(manual_qa_windows=[(_m(0), _m(45))]))
+    assert (verdict, rule) == (CellValid.valid, "(iii)(A)")
+
+
+def test_w5_14min_separation_is_invalid():
+    """14-min span falls just short of the ≥15-min threshold → invalid."""
+    verdict, rule = evaluate_hour(_ctx(manual_qa_windows=[(_m(0), _m(46))]))
+    assert (verdict, rule) == (CellValid.invalid, "(iii)(A)")
+
+
+# ---------------------------------------------------------------------------
+# The (iii)(A) literal-vs-interval-algebra boundary (docs/14 equivalence note)
+# ---------------------------------------------------------------------------
 
 def test_iii_a_dense_sampling_assumption_boundary():
     """Where the interval-algebra form could diverge from the literal test:

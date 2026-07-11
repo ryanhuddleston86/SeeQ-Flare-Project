@@ -139,14 +139,19 @@ def _iii_requirements(valid: List[Interval], operated_quadrants: int) -> bool:
     """The (h)(2)(iii) test, parameterized so branch (iv)'s exception can
     apply it 'based solely on valid data recorded after the successful
     calibration'. (A) when the unit operates in two or more quadrants,
-    (B) when it operates in only one."""
+    (B) when it operates in only one.
+
+    W5 — real ≥15-min temporal separation (D5):
+    (iii)(A)'s requirement is "two valid data points, separated by at least
+    15 minutes." The implementation uses interval_span(V) >= 15 min — the
+    interval-algebra equivalent under the dense-sampling assumption (a data
+    point exists arbitrarily close to any instant of validity). A
+    quadrant-membership proxy ("points in two different quadrants") would
+    accept data from :14:30 and :15:00 as satisfying the test; the span
+    form correctly rejects that case (span = 30 s < 15 min).
+    """
     if operated_quadrants == 1:
         return bool(valid)
-    # Interval-algebra form of (iii)(A)'s literal two-point separation test:
-    # span(V) >= 15 min. Equivalent under the dense-sampling assumption (a
-    # data point exists arbitrarily close to any instant of validity) — a
-    # deliberate implementation choice, not a silent substitution; see the
-    # equivalence note in docs/14 and the narrow-sliver boundary test.
     return interval_span(valid) >= _FIFTEEN_MIN
 
 
