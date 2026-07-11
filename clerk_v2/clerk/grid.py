@@ -398,27 +398,36 @@ def source_down_hours(
     analyzer_units: List[AnalyzerUnit],
     cells: List[GridCell],
 ) -> SourceDownHours:
-    """W10: Source-level downtime = intersection (AND) of all analyzer
-    downtimes for each unit (D9: Monitor vs source downtime).
+    """W10/F2: Source-level downtime = intersection (AND) of the IN-COVERAGE
+    analyzer downtimes for each unit (D9: Monitor vs source downtime).
 
-    A source is 'down' for a given hour only when EVERY analyzer assigned
-    to that unit simultaneously shows CellValid.invalid. Hours where any
-    analyzer is not_operating are excluded — the source was not operating
-    that hour and the hour does not belong in the DAR denominator. Hours
-    where any analyzer is not_assessed are also excluded — insufficient
-    coverage to assert a source-level verdict.
+    Coverage gate (F2): a monitor counts toward the source only for hours
+    inside its [InServiceDateUTC, OOSDateUTC) window. A temp not yet
+    deployed (hour < InServiceDate) or already pulled (hour >= OOSDate) is
+    ABSENT from that hour's intersection — neither "valid" nor "down."
 
-    Gated by coverage: only hours where EVERY analyzer for the unit has
-    an explicit grid cell are evaluated (an analyzer absent from the grid
-    for that hour means the hour is outside the build window and should
-    not be claimed as source-down).
+    A source is down for an hour iff EVERY in-coverage monitor that hour
+    shows CellValid.invalid AND at least one in-coverage monitor exists.
+    Down-source evidence can come from any invalidity path — a monitor
+    whose downtime originates from a manual (List A) entry with no capsule
+    participates exactly like a capsule-detected one (the cell's Valid is
+    all this rollup consults).
+
+    Additional exclusions per hour:
+    - any in-coverage monitor lacking a grid cell → hour skipped (outside
+      the build window; not claimable as source-down);
+    - any in-coverage monitor not_operating → the unit wasn't running;
+      excluded from the DAR denominator, not a deficiency;
+    - any in-coverage monitor not_assessed → defensive only: fresh builds
+      fail loud before emitting it (F4), but grids read back from disk may
+      still carry it; never assert source-down over an unassessed monitor.
 
     Returns {unit: [hour_start_utc, ...]} in ascending order per unit.
     Units with no source-down hours are absent from the result.
     """
-    unit_to_analyzers: Dict[str, List[str]] = {}
+    unit_to_units: Dict[str, List[AnalyzerUnit]] = {}
     for au in analyzer_units:
-        unit_to_analyzers.setdefault(au.Unit, []).append(au.Analyzer)
+        unit_to_units.setdefault(au.Unit, []).append(au)
 
     cell_status: Dict[Tuple[str, datetime], CellValid] = {
         (c.Analyzer, c.HourStartUTC): c.Valid for c in cells
@@ -426,18 +435,21 @@ def source_down_hours(
     all_hours = sorted({c.HourStartUTC for c in cells})
 
     result: SourceDownHours = {}
-    for unit, analyzers in unit_to_analyzers.items():
+    for unit, roster in unit_to_units.items():
         down: List[datetime] = []
         for hour in all_hours:
-            statuses = [cell_status.get((a, hour)) for a in analyzers]
-            # Skip if any analyzer has no cell this hour (outside build window)
+            in_cov = [au for au in roster if au.in_coverage(hour)]
+            # No in-coverage monitor at all: nothing can assert source-down.
+            if not in_cov:
+                continue
+            statuses = [cell_status.get((au.Analyzer, hour)) for au in in_cov]
+            # Skip if any in-coverage monitor has no cell (outside build window)
             if None in statuses:
                 continue
-            # Skip non-operating and not-assessed hours — coverage gate
             if any(s in (CellValid.not_operating, CellValid.not_assessed)
                    for s in statuses):
                 continue
-            # Source-down = ALL analyzers simultaneously invalid (AND/intersection)
+            # Source-down = ALL in-coverage monitors simultaneously invalid
             if all(s is CellValid.invalid for s in statuses):
                 down.append(hour)
         if down:

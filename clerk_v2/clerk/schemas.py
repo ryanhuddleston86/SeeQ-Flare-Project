@@ -129,6 +129,20 @@ class AnalyzerUnit:
     # Empty for diluent monitors themselves and for analyzers that have no
     # diluent dependency.
     DiluentBasis: str = ""
+    # F2: coverage window. A monitor counts toward its source's rollup only
+    # for hours inside [InServiceDateUTC, OOSDateUTC). None = unbounded on
+    # that side (a permanent monitor has both None). Outside the window the
+    # monitor is ABSENT from the intersection — neither valid nor down.
+    InServiceDateUTC: Optional[datetime] = None
+    OOSDateUTC: Optional[datetime] = None
+
+    def in_coverage(self, hour_start: datetime) -> bool:
+        """True when this monitor's coverage window contains the hour."""
+        if self.InServiceDateUTC is not None and hour_start < self.InServiceDateUTC:
+            return False
+        if self.OOSDateUTC is not None and hour_start >= self.OOSDateUTC:
+            return False
+        return True
 
 
 @dataclass
@@ -286,6 +300,9 @@ def read_analyzer_units(path: Path) -> List[AnalyzerUnit]:
                 DiluentSpecies=species,
                 # W8: dependency pointer — blank/absent column defaults to ""
                 DiluentBasis=(r.get("DiluentBasis") or "").strip(),
+                # F2: coverage window — blank/absent means unbounded
+                InServiceDateUTC=_dt_opt(r.get("InServiceDateUTC") or ""),
+                OOSDateUTC=_dt_opt(r.get("OOSDateUTC") or ""),
             ))
     return rows
 

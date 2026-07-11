@@ -909,3 +909,102 @@ def test_source_down_hours_returns_empty_when_no_downtime():
     units = [AnalyzerUnit("A1", "U1", SeeqCovered=True)]
     cells = [_make_cell_full("A1", hour, CellValid.valid)]
     assert source_down_hours(units, cells) == {}
+
+
+# ---------------------------------------------------------------------------
+# F2 — coverage-window gating on the source rollup
+# ---------------------------------------------------------------------------
+
+def _hourly_cells(analyzer, day_hours, invalid_hours):
+    """Cells for the given clock hours on 2026-04-01; hours listed in
+    invalid_hours are CellValid.invalid, the rest valid."""
+    return [
+        _make_cell_full(analyzer, _utc(2026, 4, 1, h),
+                        CellValid.invalid if h in invalid_hours else CellValid.valid)
+        for h in day_hours
+    ]
+
+
+def test_f2_fcc_full_coverage_intersection():
+    """FCC full-coverage case: permanent down 10:00–14:00, temp down
+    12:00–16:00, both in coverage across the whole window → source down is
+    the intersection only: {12:00, 13:00}."""
+    window = range(10, 16)
+    units = [
+        AnalyzerUnit("PERM", "FCC", SeeqCovered=True),
+        AnalyzerUnit("TEMP", "FCC", SeeqCovered=True),
+    ]
+    cells = (_hourly_cells("PERM", window, invalid_hours={10, 11, 12, 13})
+             + _hourly_cells("TEMP", window, invalid_hours={12, 13, 14, 15}))
+    result = source_down_hours(units, cells)
+    assert result == {"FCC": [_utc(2026, 4, 1, 12), _utc(2026, 4, 1, 13)]}
+
+
+def test_f2_coverage_gating_temp_not_yet_in_service():
+    """Coverage-gating case: same outages, but the temp's InServiceDate is
+    12:00 — at 10:00–11:00 only the permanent is in coverage and it is down,
+    so those hours ARE source-down. Result: {10:00, 11:00, 12:00, 13:00}."""
+    window = range(10, 16)
+    units = [
+        AnalyzerUnit("PERM", "FCC", SeeqCovered=True),
+        AnalyzerUnit("TEMP", "FCC", SeeqCovered=True,
+                     InServiceDateUTC=_utc(2026, 4, 1, 12)),
+    ]
+    cells = (_hourly_cells("PERM", window, invalid_hours={10, 11, 12, 13})
+             + _hourly_cells("TEMP", window, invalid_hours={12, 13, 14, 15}))
+    result = source_down_hours(units, cells)
+    assert result == {"FCC": [_utc(2026, 4, 1, h) for h in (10, 11, 12, 13)]}
+
+
+def test_f2_oos_monitor_excluded_from_intersection():
+    """The mirror of in-service gating: a temp already pulled (hour >=
+    OOSDate) is absent — its stale 'valid' cells cannot veto source-down."""
+    window = range(10, 14)
+    units = [
+        AnalyzerUnit("PERM", "FCC", SeeqCovered=True),
+        AnalyzerUnit("TEMP", "FCC", SeeqCovered=True,
+                     OOSDateUTC=_utc(2026, 4, 1, 12)),
+    ]
+    # PERM down 12-13; TEMP reads valid there but is out of coverage.
+    cells = (_hourly_cells("PERM", window, invalid_hours={12, 13})
+             + _hourly_cells("TEMP", window, invalid_hours=set()))
+    result = source_down_hours(units, cells)
+    assert result == {"FCC": [_utc(2026, 4, 1, 12), _utc(2026, 4, 1, 13)]}
+
+
+def test_f2_no_in_coverage_monitor_means_no_source_down_claim():
+    """At least one in-coverage monitor is required — an hour where every
+    roster entry is out of coverage asserts nothing."""
+    units = [
+        AnalyzerUnit("TEMP", "FCC", SeeqCovered=True,
+                     InServiceDateUTC=_utc(2026, 4, 1, 12)),
+    ]
+    cells = _hourly_cells("TEMP", range(10, 12), invalid_hours={10, 11})
+    assert source_down_hours(units, cells) == {}
+
+
+def test_f2_manual_only_temp_participates_in_rollup():
+    """Manual-only temp: the temp's down window comes from a manual (List A)
+    TechEntry with no capsule anywhere — it must still participate in the
+    intersection exactly like a capsule-detected outage. Both monitors down
+    the same hour → source-down."""
+    hour = _utc(2026, 4, 1, 8, 0)
+    hour_end = hour + timedelta(hours=1)
+    events = [_event("E1", EventType.TechEntry, None, hour, hour_end, "TEMP", hour)]
+    capsules = [Capsule("PERM", "status-offline", hour, hour_end)]
+    units = [
+        AnalyzerUnit("PERM", "FCC-U", SeeqCovered=True),
+        AnalyzerUnit("TEMP", "FCC-U", SeeqCovered=True),
+    ]
+    cells = build_grid(
+        events=events, capsules=capsules,
+        operating_windows=[OperatingWindow("FCC-U", hour, hour_end)],
+        analyzer_units=units,
+        qa_windows=[], config=_config(),
+        window_start=hour, window_end=hour_end,
+    )
+    by_analyzer = {c.Analyzer: c for c in cells}
+    assert by_analyzer["TEMP"].Valid is CellValid.invalid, \
+        "manual full-hour window -> (iii)(A) with empty V -> invalid"
+    assert by_analyzer["PERM"].Valid is CellValid.invalid
+    assert source_down_hours(units, cells) == {"FCC-U": [hour]}
