@@ -69,16 +69,47 @@ def _cfg(**reason_map) -> SiteConfig:
     )
 
 
+# F7: the real reason-code vocabulary — MM-01 monitor malfunction, NM-01
+# non-monitor malfunction, QA-01 QA/calibration, OK-01 other-known, UK-01
+# unknown. FLAG: provisional paragraph assignments pending SME sign-off.
+_REAL_REASON_MAP = {
+    "MM-01": "(i)", "NM-01": "(i)", "QA-01": "(iii)",
+    "OK-01": "(i)", "UK-01": "(i)",
+}
+
+
 def test_reason_to_paragraph_returns_mapped_value():
-    cfg = _cfg(BKD="(iii)(A)", MAINT="(iii)(A)")
-    assert reason_to_paragraph("BKD", cfg) == "(iii)(A)"
-    assert reason_to_paragraph("MAINT", cfg) == "(iii)(A)"
+    cfg = _cfg(**_REAL_REASON_MAP)
+    assert reason_to_paragraph("QA-01", cfg) == "(iii)"
+    assert reason_to_paragraph("MM-01", cfg) == "(i)"
+    assert reason_to_paragraph("UK-01", cfg) == "(i)"
 
 
 def test_reason_to_paragraph_returns_none_for_unknown():
-    cfg = _cfg(BKD="(iii)(A)")
+    cfg = _cfg(**_REAL_REASON_MAP)
     assert reason_to_paragraph("UNKNOWN-CODE", cfg) is None
+    assert reason_to_paragraph("BKD", cfg) is None, "retired placeholder code must no longer map"
     assert reason_to_paragraph("", cfg) is None
+
+
+def test_fixture_config_carries_real_vocabulary():
+    from pathlib import Path
+    from clerk.schemas import read_config
+    cfg = read_config(Path(__file__).parent.parent / "fixtures" / "config.csv")
+    assert cfg.ReasonParagraphMap == _REAL_REASON_MAP
+    assert "BKD" not in cfg.ReasonParagraphMap and "MAINT" not in cfg.ReasonParagraphMap
+
+
+def test_iii_family_override_dispatches_a_or_b_by_quadrants():
+    """QA-01 maps to the (iii) FAMILY — (A) vs (B) is decided by quadrant
+    occupancy, never by the reason code. Multi-quadrant hour → (iii)(A);
+    single-quadrant hour → (iii)(B)."""
+    multi = _ctx(resolved_paragraph="(iii)")             # 4 quadrants operated
+    verdict, rule = evaluate_hour(multi)
+    assert rule == "(iii)(A)"
+    single = _ctx(operating=[(_m(50), _m(58))], resolved_paragraph="(iii)")
+    verdict, rule = evaluate_hour(single)
+    assert (verdict, rule) == (CellValid.valid, "(iii)(B)")
 
 
 def test_resolved_paragraph_overrides_auto_selection():

@@ -130,13 +130,13 @@ def test_reason_code_from_latest_event_with_one():
         _event("E1", EventType.SeeqDetection, None, _utc(2026, 1, 1), _utc(2026, 1, 2),
               "A1", _utc(2026, 1, 1)),
         _event("E2", EventType.Confirmation, "E1", _utc(2026, 1, 1), _utc(2026, 1, 2),
-              "A1", _utc(2026, 1, 1, 5), reason_code="BKD"),
+              "A1", _utc(2026, 1, 1, 5), reason_code="MM-01"),
     ]
     events_by_id = {e.EventID: e for e in events}
     obs = _obs("E1", Status.confirmed, _utc(2026, 1, 1), _utc(2026, 1, 2),
               ["A1"], ["E1", "E2"])
     rows = _adjudicated_condition_rows([obs], events_by_id, [])
-    assert rows[0].ReasonCode == "BKD"
+    assert rows[0].ReasonCode == "MM-01"
 
 
 def test_reason_code_blank_when_none_present():

@@ -241,10 +241,20 @@ def _branch_not_assessed(ctx: HourContext) -> Tuple[CellValid, str]:
     return CellValid.not_assessed, "not-assessed:no-seeq-coverage"
 
 
-# W4: paragraph-label → branch function (used by _select_paragraph for
+def _branch_iii(ctx: HourContext) -> Tuple[CellValid, str]:
+    """The (iii) FAMILY dispatcher for config overrides keyed to the whole
+    paragraph (e.g. QA-01 → "(iii)"): (A) vs (B) is decided by quadrant
+    occupancy per the verbatim text, never by the reason code itself."""
+    if len(quadrants_operated(ctx)) == 1:
+        return _branch_iii_b(ctx)
+    return _branch_iii_a(ctx)
+
+
+# W4/F7: paragraph-label → branch function (used by _select_paragraph for
 # config-driven reason→paragraph overrides). FLAG: provisional.
 _PARAGRAPH_BRANCH = {
     "(iv)":     _branch_iv,
+    "(iii)":    _branch_iii,
     "(iii)(B)": _branch_iii_b,
     "(iii)(A)": _branch_iii_a,
     "(i)":      _branch_normal,
@@ -255,9 +265,13 @@ _PARAGRAPH_BRANCH = {
 def reason_to_paragraph(reason: str, config: SiteConfig) -> Optional[str]:
     """Look up the CFR paragraph label for a reason code from the site config.
 
-    Returns the paragraph string (e.g. "(iii)(A)") if the reason code is
-    mapped, or None if no mapping exists (fall through to auto-selection).
-    FLAG: provisional — ReasonParagraphMap entries not yet confirmed by Ryan.
+    Returns the paragraph string (e.g. "(iii)" or "(i)") if the reason code
+    is mapped, or None if no mapping exists (fall through to auto-selection).
+
+    Vocabulary (F7): MM-01 monitor malfunction, NM-01 non-monitor
+    malfunction, QA-01 QA/calibration, OK-01 other-known, UK-01 unknown.
+    # FLAG: provisional — seeded QA-01→(iii); MM-01/NM-01/OK-01/UK-01→(i)
+    # (the stricter default). Pending SME sign-off on the full mapping.
     """
     return config.ReasonParagraphMap.get(reason)
 
