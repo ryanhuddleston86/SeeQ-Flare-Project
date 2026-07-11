@@ -617,69 +617,146 @@ def test_not_assessed_cell_is_not_down_hour():
 
 
 # ---------------------------------------------------------------------------
-# W6 — backdate_to_last_passing (pure function, synthetic grid)
+# W6/F3 — backdate to the last passing VALIDATION EVENT + invalidation wiring
+#
+# F3 re-pointed backdate_to_last_passing from grid cells (last hour whose
+# DATA read valid — the wrong anchor) to the validation-event stream (last
+# passing daily-validation EVENT). The old cell-based tests are replaced by
+# their event-stream equivalents, and the anchor is now WIRED into the
+# invalidation path (validation_invalidation_windows -> build_grid).
 # ---------------------------------------------------------------------------
 
-def _cell(analyzer, hour_offset_h, valid: CellValid) -> GridCell:
-    base = _utc(2026, 1, 15, 0)
-    hour = base + timedelta(hours=hour_offset_h)
-    return GridCell(
-        Analyzer=analyzer,
-        HourStartUTC=hour,
-        HourLocalLabel="",
-        OperatingFraction=1.0,
-        Valid=valid,
-        RuleApplied="(i)",
-        ContributingEventIDs=[],
-    )
+from clerk.grid import validation_invalidation_windows
+from clerk.schemas import ValidationEvent
 
 
-def test_backdate_returns_most_recent_valid_hour():
-    grid = [
-        _cell("A1", 0, CellValid.valid),
-        _cell("A1", 1, CellValid.valid),
-        _cell("A1", 2, CellValid.invalid),
-        _cell("A1", 3, CellValid.invalid),
+def _val(analyzer, at, passed):
+    return ValidationEvent(Analyzer=analyzer, ValidatedAtUTC=at, Passed=passed)
+
+
+def test_backdate_returns_most_recent_passing_validation():
+    vals = [
+        _val("A1", _utc(2026, 1, 14, 6), True),
+        _val("A1", _utc(2026, 1, 15, 6), True),
+        _val("A1", _utc(2026, 1, 16, 6), False),  # fails never anchor
     ]
-    result = backdate_to_last_passing("A1", grid)
-    assert result == _utc(2026, 1, 15, 1), "must return the latest valid hour, not the first"
+    result = backdate_to_last_passing("A1", vals, _utc(2026, 1, 16, 6))
+    assert result == _utc(2026, 1, 15, 6), \
+        "anchor is the latest PASSING validation at or before the failure"
 
 
-def test_backdate_returns_none_when_no_valid_cell():
-    grid = [
-        _cell("A1", 0, CellValid.invalid),
-        _cell("A1", 1, CellValid.not_operating),
+def test_backdate_ignores_passes_after_the_reference_instant():
+    vals = [
+        _val("A1", _utc(2026, 1, 15, 6), True),
+        _val("A1", _utc(2026, 1, 17, 6), True),   # after `at` — not an anchor
     ]
-    assert backdate_to_last_passing("A1", grid) is None
+    result = backdate_to_last_passing("A1", vals, _utc(2026, 1, 16, 6))
+    assert result == _utc(2026, 1, 15, 6)
 
 
-def test_backdate_returns_none_for_unknown_analyzer():
-    grid = [_cell("A1", 0, CellValid.valid)]
-    assert backdate_to_last_passing("A2", grid) is None
+def test_backdate_returns_none_when_no_passing_validation():
+    vals = [_val("A1", _utc(2026, 1, 15, 6), False)]
+    assert backdate_to_last_passing("A1", vals, _utc(2026, 1, 16, 6)) is None
 
 
 def test_backdate_skips_other_analyzers():
-    grid = [
-        _cell("A1", 0, CellValid.valid),
-        _cell("A1", 1, CellValid.valid),
-        _cell("A2", 5, CellValid.valid),   # later hour, different analyzer
+    vals = [
+        _val("A1", _utc(2026, 1, 15, 6), True),
+        _val("A2", _utc(2026, 1, 16, 6), True),  # later, different analyzer
     ]
-    result = backdate_to_last_passing("A1", grid)
-    assert result == _utc(2026, 1, 15, 1), "must not include cells from other analyzers"
+    result = backdate_to_last_passing("A1", vals, _utc(2026, 1, 16, 12))
+    assert result == _utc(2026, 1, 15, 6), "must not anchor on another analyzer's pass"
 
 
-def test_backdate_not_operating_does_not_count_as_passing():
-    grid = [
-        _cell("A1", 0, CellValid.valid),
-        _cell("A1", 1, CellValid.not_operating),
-        _cell("A1", 2, CellValid.not_assessed),
+def test_backdate_empty_stream_returns_none():
+    assert backdate_to_last_passing("A1", [], _utc(2026, 1, 16, 6)) is None
+
+
+def test_invalidation_window_spans_anchor_to_failure():
+    vals = [
+        _val("A1", _utc(2026, 1, 15, 6), True),
+        _val("A1", _utc(2026, 1, 16, 6), False),
     ]
-    result = backdate_to_last_passing("A1", grid)
-    assert result == _utc(2026, 1, 15, 0), "only CellValid.valid counts as passing"
+    out = validation_invalidation_windows(vals)
+    assert out == {"A1": [(_utc(2026, 1, 15, 6), _utc(2026, 1, 16, 6))]}
 
 
-def test_backdate_empty_grid_returns_none():
-    assert backdate_to_last_passing("A1", []) is None
+def test_invalidation_no_anchor_falls_back_24h():
+    """FLAG: provisional — a failure with no prior passing validation on
+    record backdates one daily-validation period (24 h). Pending Ryan."""
+    vals = [_val("A1", _utc(2026, 1, 16, 6), False)]
+    out = validation_invalidation_windows(vals)
+    assert out == {"A1": [(_utc(2026, 1, 15, 6), _utc(2026, 1, 16, 6))]}
+
+
+def test_f3_failed_validation_invalidates_back_to_last_passing_validation():
+    """F3's specified end-to-end case: validation passes Day1 06:00, the
+    DATA reads valid every hour through Day2 06:00 (no capsules, no events),
+    then validation FAILS Day2 06:00. The invalidation must reach back to
+    Day1 06:00 — the last passing validation EVENT — not to ~Day2 05:00
+    (the last hour whose data merely read valid)."""
+    day1_0600 = _utc(2026, 1, 15, 6)
+    day2_0600 = _utc(2026, 1, 16, 6)
+    window_start = _utc(2026, 1, 15, 4)   # two clean hours before the anchor
+    window_end = _utc(2026, 1, 16, 8)     # through one clean hour after
+    vals = [
+        _val("A1", day1_0600, True),
+        _val("A1", day2_0600, False),
+    ]
+    cells = build_grid(
+        events=[], capsules=[],
+        operating_windows=[OperatingWindow("U1", window_start, window_end)],
+        analyzer_units=[AnalyzerUnit("A1", "U1", SeeqCovered=True)],
+        qa_windows=[], config=_config(),
+        window_start=window_start, window_end=window_end,
+        validations=vals,
+    )
+    by_hour = {c.HourStartUTC: c for c in cells}
+    # Before the anchor: untouched, valid.
+    assert by_hour[_utc(2026, 1, 15, 4)].Valid is CellValid.valid
+    assert by_hour[_utc(2026, 1, 15, 5)].Valid is CellValid.valid
+    # Anchor through failure: every hour invalid — including hours nearly a
+    # full day before the failure, where the data itself read valid.
+    hour = day1_0600
+    while hour < day2_0600:
+        assert by_hour[hour].Valid is CellValid.invalid, \
+            f"{hour} must be invalidated back to the passing validation event"
+        hour += timedelta(hours=1)
+    # The failure hour itself: branch (iv), no in-hour recovery -> invalid.
+    assert by_hour[day2_0600].Valid is CellValid.invalid
+    assert by_hour[day2_0600].RuleApplied == "(iv)"
+    # After the failure hour: no window asserted -> valid again.
+    assert by_hour[_utc(2026, 1, 16, 7)].Valid is CellValid.valid
+
+
+def test_f3_in_hour_recovery_via_branch_iv():
+    """The (iv) recovery exception is now reachable through build_grid: fail
+    :05, pass :30 in the same hour, clean data after -> the failure hour is
+    VALID under (iv). Hours before the fail are still backdated-invalid."""
+    anchor = _utc(2026, 1, 15, 6)
+    fail_at = _utc(2026, 1, 16, 6, 5)
+    pass_at = _utc(2026, 1, 16, 6, 30)
+    window_start = _utc(2026, 1, 16, 5)
+    window_end = _utc(2026, 1, 16, 8)
+    vals = [
+        _val("A1", anchor, True),
+        _val("A1", fail_at, False),
+        _val("A1", pass_at, True),
+    ]
+    cells = build_grid(
+        events=[], capsules=[],
+        operating_windows=[OperatingWindow("U1", _utc(2026, 1, 15, 0), window_end)],
+        analyzer_units=[AnalyzerUnit("A1", "U1", SeeqCovered=True)],
+        qa_windows=[], config=_config(),
+        window_start=window_start, window_end=window_end,
+        validations=vals,
+    )
+    by_hour = {c.HourStartUTC: c for c in cells}
+    assert by_hour[_utc(2026, 1, 16, 5)].Valid is CellValid.invalid, \
+        "hour before the failure is inside the backdated window"
+    assert by_hour[_utc(2026, 1, 16, 6)].Valid is CellValid.valid
+    assert by_hour[_utc(2026, 1, 16, 6)].RuleApplied == "(iv)"
+    assert by_hour[_utc(2026, 1, 16, 7)].Valid is CellValid.valid
 
 
 # ---------------------------------------------------------------------------

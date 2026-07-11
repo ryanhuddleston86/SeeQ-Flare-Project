@@ -77,6 +77,7 @@ from clerk.schemas import (
     read_operating,
     read_pull_windows,
     read_qa_windows,
+    read_validations,
     write_adjudicated_condition,
     write_events,
     write_grid,
@@ -177,6 +178,7 @@ def run(
     operating = read_operating(fixtures_dir / "operating.csv")
     analyzer_units = read_analyzer_units(fixtures_dir / "analyzer_units.csv")
     qa_windows = read_qa_windows(fixtures_dir / "qa_windows.csv")
+    validations = read_validations(fixtures_dir / "validations.csv")  # [] if absent
     config = read_config(fixtures_dir / "config.csv")
     prior_cells = read_grid(fixtures_dir / "prior_grid.csv")
     pull_windows = read_pull_windows(fixtures_dir / "pull_windows.csv")
@@ -197,7 +199,7 @@ def run(
     window_start = _utc_midnight(_months_before(run_date, config.LookbackMonths))
     window_end = _utc_midnight(run_date) + timedelta(days=1)
     cells = build_grid(events, capsules, operating, analyzer_units, qa_windows,
-                       config, window_start, window_end)
+                       config, window_start, window_end, validations=validations)
     write_grid(out_dir / "grid.csv", cells)
 
     # Step 6 — the two remaining writers

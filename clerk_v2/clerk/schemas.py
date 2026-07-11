@@ -146,6 +146,17 @@ class AnalyzerUnit:
 
 
 @dataclass
+class ValidationEvent:
+    """F3: one daily-validation (calibration error check) outcome. This is
+    the event stream the backdate anchor works from — the anchor for a
+    failure is the most recent PASSING validation event, never the last
+    hour whose data merely read valid."""
+    Analyzer: str
+    ValidatedAtUTC: datetime
+    Passed: bool
+
+
+@dataclass
 class QAWindow:
     Analyzer: str
     StartUTC: datetime
@@ -303,6 +314,28 @@ def read_analyzer_units(path: Path) -> List[AnalyzerUnit]:
                 # F2: coverage window — blank/absent means unbounded
                 InServiceDateUTC=_dt_opt(r.get("InServiceDateUTC") or ""),
                 OOSDateUTC=_dt_opt(r.get("OOSDateUTC") or ""),
+            ))
+    return rows
+
+
+def read_validations(path: Path) -> List[ValidationEvent]:
+    """F3: daily-validation outcomes. Returns [] when the file does not
+    exist — a site with no validation feed yet simply contributes no
+    validation-driven invalidation."""
+    if not path.exists():
+        return []
+    rows: List[ValidationEvent] = []
+    with open(path, newline="") as f:
+        for r in csv.DictReader(f):
+            result = r["Result"].strip().lower()
+            if result not in ("pass", "fail"):
+                raise ValueError(
+                    f"validations.csv: unknown Result {r['Result']!r} for "
+                    f"{r['Analyzer']} — expected pass or fail")
+            rows.append(ValidationEvent(
+                Analyzer=r["Analyzer"],
+                ValidatedAtUTC=_dt(r["ValidatedAtUTC"]),
+                Passed=result == "pass",
             ))
     return rows
 

@@ -60,10 +60,12 @@ resolve an hour invalid purely from an unticketed live capsule as silent
 (unchanged detection, nothing to approve) instead of an unconditional
 INTEGRITY ALERT.
 
-FLAGGED, not blocking: no daily-calibration event source exists yet in any
-fixture or schema. HourContext.failed_cal_at/passing_cal_at are always
-None here — branch (iv) never fires via build_grid until that ingestion
-path is defined. Cells simply route through the other branches.
+RESOLVED (F3, was flagged): the daily-calibration event source now exists —
+validations.csv → ValidationEvent → build_grid's `validations` parameter.
+A failed validation in an hour sets failed_cal_at (branch (iv) fires); a
+subsequent in-hour pass sets passing_cal_at for (iv)'s recovery test. The
+backdating path (validation_invalidation_windows) invalidates everything
+between the last PASSING validation event and the failure instant.
 
 Operating gate is source-agnostic by construction (spec): OperatingWindow
 carries no "how do we know this" field — a continuous-signal unit and a
@@ -94,6 +96,7 @@ from clerk.schemas import (
     OperatingWindow,
     QAWindow,
     SiteConfig,
+    ValidationEvent,
 )
 
 # W10 type alias
@@ -313,11 +316,13 @@ def build_grid(
     config: SiteConfig,
     window_start: datetime,
     window_end: datetime,
+    validations: Optional[List[ValidationEvent]] = None,
 ) -> List[GridCell]:
     """Pure function: fixtures (already read) + an explicit [window_start,
     window_end) hour-aligned UTC range -> the grid. Which range to evaluate
     on a given run (LookbackMonths etc.) is run.py's orchestration concern
     (Step 6), not this module's."""
+    validations = validations or []
     observations = fold(events)
     origin_types = _origin_types(events)
 
@@ -330,8 +335,18 @@ def build_grid(
         detected_windows, observations, origin_types, _capsules_by_analyzer_class(capsules),
         config.JitterToleranceMin)
 
+    # F3: validation-failure backdating joins the union AFTER the dismissal
+    # subtraction — a failed daily validation is a measured fact, never
+    # dismissible via a capsule-matched signed extent.
+    for analyzer, intervals in validation_invalidation_windows(validations).items():
+        detected_windows.setdefault(analyzer, []).extend(intervals)
+
     for analyzer, intervals in _qa_windows_by_analyzer(qa_windows).items():
         manual_windows.setdefault(analyzer, []).extend(intervals)
+
+    validations_by_analyzer: Dict[str, List[ValidationEvent]] = {}
+    for v in validations:
+        validations_by_analyzer.setdefault(v.Analyzer, []).append(v)
 
     operating_by_unit = _operating_by_unit(operating_windows)
     provenance = _provenance_index(observations, capsules)
@@ -349,6 +364,18 @@ def build_grid(
             own_detected = detected_windows.get(au.Analyzer, [])
             if au.DiluentBasis:
                 own_detected = own_detected + detected_windows.get(au.DiluentBasis, [])
+            # F3: a failed daily validation in this hour selects branch (iv);
+            # a subsequent pass in the same hour enables (iv)'s recovery test.
+            failed_cal_at = passing_cal_at = None
+            for v in validations_by_analyzer.get(au.Analyzer, []):
+                if hour <= v.ValidatedAtUTC < hour_end:
+                    if not v.Passed and (failed_cal_at is None or v.ValidatedAtUTC < failed_cal_at):
+                        failed_cal_at = v.ValidatedAtUTC
+            if failed_cal_at is not None:
+                for v in validations_by_analyzer.get(au.Analyzer, []):
+                    if v.Passed and failed_cal_at < v.ValidatedAtUTC < hour_end:
+                        if passing_cal_at is None or v.ValidatedAtUTC < passing_cal_at:
+                            passing_cal_at = v.ValidatedAtUTC
             ctx = HourContext(
                 analyzer=au.Analyzer,
                 hour_start=hour,
@@ -356,6 +383,8 @@ def build_grid(
                 operating=_clip(unit_windows, hour, hour_end),
                 manual_qa_windows=_clip(manual_windows.get(au.Analyzer, []), hour, hour_end),
                 detected_invalid_windows=_clip(own_detected, hour, hour_end),
+                failed_cal_at=failed_cal_at,
+                passing_cal_at=passing_cal_at,
             )
             valid, rule_applied = evaluate_hour(ctx)
             operated = sum((e - s for s, e in ctx.operating), timedelta(0))
@@ -391,7 +420,7 @@ def is_down_hour(cell: GridCell) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# W6 — backdate-to-last-passing
+# W10/F2 — source rollup
 # ---------------------------------------------------------------------------
 
 def source_down_hours(
@@ -457,17 +486,63 @@ def source_down_hours(
     return result
 
 
-def backdate_to_last_passing(analyzer: str, grid: List[GridCell]) -> Optional[datetime]:
-    """Return the HourStartUTC of the most recent CellValid.valid cell for
-    the given analyzer, or None if no valid cell exists.
+# ---------------------------------------------------------------------------
+# W6/F3 — backdate to the last passing VALIDATION EVENT (not last valid cell)
+# ---------------------------------------------------------------------------
 
-    Used to determine the latest confirmed-good hour before a downtime
-    window starts — the backdate anchor for an episode's start time.
-    Pure function: no I/O, no mutation.
+# FLAG: provisional — when a validation FAILS with no prior passing
+# validation on record, there is no anchor to backdate to. Fallback: one
+# daily-validation period (24 h) before the failure. Awaiting Ryan's ruling
+# on the correct no-anchor behavior (full-history invalidation vs 24 h).
+_NO_ANCHOR_FALLBACK = timedelta(hours=24)
+
+
+def backdate_to_last_passing(
+    analyzer: str,
+    validations: List[ValidationEvent],
+    at: datetime,
+) -> Optional[datetime]:
+    """F3: return the timestamp of the most recent PASSING daily-validation
+    event for the analyzer at or before `at`, or None if no passing
+    validation exists on record.
+
+    This anchors invalidation to the validation-EVENT stream, not to data
+    validity: between two daily validations the data can read valid every
+    hour, yet a failed validation invalidates everything back to the prior
+    passing validation event — up to a full day earlier. (The previous form
+    returned the most recent CellValid.valid grid cell, i.e. the last hour
+    with valid DATA — the wrong anchor, and it was never wired into the
+    invalidation path. It now is: see validation_invalidation_windows and
+    build_grid.)
     """
     best: Optional[datetime] = None
-    for cell in grid:
-        if cell.Analyzer == analyzer and cell.Valid is CellValid.valid:
-            if best is None or cell.HourStartUTC > best:
-                best = cell.HourStartUTC
+    for v in validations:
+        if v.Analyzer == analyzer and v.Passed and v.ValidatedAtUTC <= at:
+            if best is None or v.ValidatedAtUTC > best:
+                best = v.ValidatedAtUTC
     return best
+
+
+def validation_invalidation_windows(
+    validations: List[ValidationEvent],
+) -> Dict[str, List[Interval]]:
+    """F3: the invalidation path the backdate anchor feeds. For every FAILED
+    validation at time T, emit the invalid window (anchor, T) where anchor
+    is the most recent passing validation at or before T. The failure hour
+    itself is governed by branch (iv) — build_grid sets failed_cal_at on
+    that hour's context — so this window intentionally stops at T.
+
+    Overlapping windows from consecutive failures merge naturally in the
+    downstream interval union.
+    """
+    out: Dict[str, List[Interval]] = {}
+    for v in validations:
+        if v.Passed:
+            continue
+        anchor = backdate_to_last_passing(v.Analyzer, validations, v.ValidatedAtUTC)
+        if anchor is None:
+            # FLAG: provisional no-anchor fallback — see _NO_ANCHOR_FALLBACK.
+            anchor = v.ValidatedAtUTC - _NO_ANCHOR_FALLBACK
+        if anchor < v.ValidatedAtUTC:
+            out.setdefault(v.Analyzer, []).append((anchor, v.ValidatedAtUTC))
+    return out
