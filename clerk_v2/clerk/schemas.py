@@ -44,10 +44,11 @@ class CellValid(str, Enum):
     valid        = "1"
     invalid      = "0"
     not_operating = "NOT-OPERATING"
-    # SeeqCovered=false and no branch 2/3/4 claims the hour: detection-based
-    # assessment is impossible, and pretending otherwise would fabricate
-    # validity. How NOT-ASSESSED rolls into availability% / the DAR
-    # denominator is UNDECIDED — hard stop per §5; flagged, awaiting Ryan.
+    # F4: RETIRED as a compliance outcome — at CBG every operating hour is
+    # assessed (Seeq or manual), and fresh builds FAIL LOUD
+    # (rules.NotAssessedHourError) instead of emitting this. The value is
+    # kept only so grids written before F4 still parse via read_grid;
+    # downstream handling of it is defensive, never a policy.
     not_assessed = "NOT-ASSESSED"
 
 
@@ -207,9 +208,9 @@ class AdjudicatedCondition:
 class PIPayloadRow:
     """Step 6 output: pi_payload.csv — dense hourly, full window every run,
     replace-in-place semantics. Value is nullable: valid/invalid map to
-    1.0/0.0, but NOT-OPERATING and NOT-ASSESSED have no agreed numeric
-    encoding yet (tangled with the open NOT-ASSESSED rollup hard stop) —
-    left blank rather than guessing. See run.py."""
+    1.0/0.0; NOT-OPERATING is blank. F4: NOT-ASSESSED cannot occur in a
+    fresh build (fails loud); its blank handling is defensive, for cells
+    read back from pre-F4 grids. See run.py."""
     Tag: str
     HourStartUTC: datetime
     Value: Optional[float]

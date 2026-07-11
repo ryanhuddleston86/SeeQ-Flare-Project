@@ -191,10 +191,14 @@ def test_all_three_lube_channels_map_to_lube_flare_unit():
     assert lube == {"LUBEFLR-NHV-BTU", "LUBEFLR-H2S-PCT", "LUBEFLR-H2S-PPM"}
 
 
-def test_seeq_covered_true_only_for_lube_channels():
+def test_seeq_covered_for_entire_roster():
+    """F4 doctrine: at CBG every operating hour is assessed (Seeq or
+    manual). The fixture roster models that — every analyzer is Seeq-
+    covered. (Formerly only the lube channels were covered, leaving the
+    CEMS analyzers to the retired NOT-ASSESSED state.)"""
     units = read_analyzer_units(FIXTURES / "analyzer_units.csv")
-    covered = {u.Analyzer for u in units if u.SeeqCovered}
-    assert covered == {"LUBEFLR-NHV-BTU", "LUBEFLR-H2S-PCT", "LUBEFLR-H2S-PPM"}
+    assert all(u.SeeqCovered for u in units), \
+        "an uncovered analyzer with operating hours would fail loud per F4"
 
 
 def test_seeq_covered_defaults_false_when_column_absent(tmp_path):

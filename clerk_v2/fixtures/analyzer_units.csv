@@ -1,9 +1,9 @@
 Analyzer,Unit,SeeqCovered,DiluentsRole,DiluentSpecies,DiluentBasis
-CEMS-001,UNIT-A,false,diluent-corrected,CO2,CEMS-003
-CEMS-002,UNIT-A,false,diluent-corrected,CO2,CEMS-003
-CEMS-003,UNIT-B,false,diluent,CO2,
-CEMS-O2-001,UNIT-B,false,diluent,O2,
-CEMS-004,UNIT-B,false,diluent-corrected,O2,CEMS-O2-001
+CEMS-001,UNIT-A,true,diluent-corrected,CO2,CEMS-003
+CEMS-002,UNIT-A,true,diluent-corrected,CO2,CEMS-003
+CEMS-003,UNIT-B,true,diluent,CO2,
+CEMS-O2-001,UNIT-B,true,diluent,O2,
+CEMS-004,UNIT-B,true,diluent-corrected,O2,CEMS-O2-001
 LUBEFLR-NHV-BTU,LUBE_FLARE,true,not-diluent-corrected,,
 LUBEFLR-H2S-PCT,LUBE_FLARE,true,not-diluent-corrected,,
 LUBEFLR-H2S-PPM,LUBE_FLARE,true,not-diluent-corrected,,

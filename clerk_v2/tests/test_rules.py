@@ -133,13 +133,17 @@ def test_resolved_paragraph_unknown_label_falls_through():
 
 
 # ---------------------------------------------------------------------------
-# SeeqCovered gate + NOT-ASSESSED (Ryan, 2026-07-02) — unchanged behavior
+# SeeqCovered gate — F4: the no-assessment dead end now FAILS LOUD
 # ---------------------------------------------------------------------------
 
-def test_uncovered_normal_hour_is_not_assessed():
-    verdict, rule = evaluate_hour(_ctx(seeq_covered=False))
-    assert verdict is CellValid.not_assessed
-    assert rule == "not-assessed:no-seeq-coverage"
+def test_uncovered_normal_hour_fails_loud():
+    """F4: NOT-ASSESSED is not a valid compliance outcome — an operating
+    hour with no Seeq coverage and no manual window is a roster/data-feed
+    defect and must raise, never emit a silent state. (Formerly asserted
+    CellValid.not_assessed; that outcome is retired.)"""
+    from clerk.rules import NotAssessedHourError
+    with pytest.raises(NotAssessedHourError, match="CEMS-001"):
+        evaluate_hour(_ctx(seeq_covered=False))
 
 
 def test_not_operating_hour_needs_no_coverage_and_no_regulation():

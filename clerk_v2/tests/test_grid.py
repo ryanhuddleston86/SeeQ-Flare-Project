@@ -262,16 +262,20 @@ def test_not_operating_hour():
     assert cells[0].OperatingFraction == 0.0
 
 
-def test_uncovered_analyzer_clean_hour_is_not_assessed():
+def test_uncovered_analyzer_clean_operating_hour_fails_loud():
+    """F4: an operating hour with no assessment path must raise from
+    build_grid, not silently emit NOT-ASSESSED. (Formerly asserted
+    CellValid.not_assessed; that outcome is retired.)"""
+    from clerk.rules import NotAssessedHourError
     hour = _utc(2026, 4, 1, 8, 0)
-    cells = build_grid(
-        events=[], capsules=[],
-        operating_windows=[OperatingWindow("U1", hour, hour + timedelta(hours=1))],
-        analyzer_units=[AnalyzerUnit("A1", "U1", SeeqCovered=False)],
-        qa_windows=[], config=_config(),
-        window_start=hour, window_end=hour + timedelta(hours=1),
-    )
-    assert cells[0].Valid is CellValid.not_assessed
+    with pytest.raises(NotAssessedHourError, match="A1"):
+        build_grid(
+            events=[], capsules=[],
+            operating_windows=[OperatingWindow("U1", hour, hour + timedelta(hours=1))],
+            analyzer_units=[AnalyzerUnit("A1", "U1", SeeqCovered=False)],
+            qa_windows=[], config=_config(),
+            window_start=hour, window_end=hour + timedelta(hours=1),
+        )
 
 
 def test_tech_entry_window_triggers_iii_a_regardless_of_coverage():
@@ -445,16 +449,21 @@ def test_dismissal_with_unrelated_non_matching_capsule_stays_invalid():
 
 
 def test_multiple_hours_and_analyzers_iterate_independently():
+    """Iteration structure test: 2 analyzers x 3 hours -> 6 cells, verdicts
+    computed per analyzer. (A2 was SeeqCovered=False asserting not_assessed;
+    F4 retired that outcome, so both analyzers are covered here — one clean,
+    one with a detected outage — to keep the per-analyzer independence
+    observable.)"""
     hour = _utc(2026, 4, 1, 8, 0)
     cells = build_grid(
-        events=[], capsules=[],
+        events=[], capsules=[Capsule("A2", "status-offline", hour, hour + timedelta(hours=3))],
         operating_windows=[
             OperatingWindow("U1", hour, hour + timedelta(hours=3)),
             OperatingWindow("U2", hour, hour + timedelta(hours=3)),
         ],
         analyzer_units=[
             AnalyzerUnit("A1", "U1", SeeqCovered=True),
-            AnalyzerUnit("A2", "U2", SeeqCovered=False),
+            AnalyzerUnit("A2", "U2", SeeqCovered=True),
         ],
         qa_windows=[], config=_config(),
         window_start=hour, window_end=hour + timedelta(hours=3),
@@ -463,7 +472,7 @@ def test_multiple_hours_and_analyzers_iterate_independently():
     a1_valids = {c.Valid for c in cells if c.Analyzer == "A1"}
     a2_valids = {c.Valid for c in cells if c.Analyzer == "A2"}
     assert a1_valids == {CellValid.valid}
-    assert a2_valids == {CellValid.not_assessed}
+    assert a2_valids == {CellValid.invalid}, "A2's outage must not leak into A1"
 
 
 def test_local_label_reflects_site_timezone():
@@ -548,6 +557,26 @@ def test_fixture_set_builds_without_error():
                        config, window_start, window_end)
     assert len(cells) == 8 * 3  # 8 analyzers (F5 added the O2 pair) x 3 hours
     assert all(isinstance(c.Valid, CellValid) for c in cells)
+
+
+def test_f4_invariant_fixture_set_produces_zero_not_assessed_hours():
+    """F4 invariant: the full synthetic fixture set, evaluated over its
+    entire operating span, yields ZERO not_assessed cells. Every operating
+    hour is assessed (Seeq or manual); an unassessable hour raises
+    NotAssessedHourError inside build_grid, so reaching the assertion at
+    all already proves the loud path never fired — the explicit scan then
+    pins the absence of the retired silent state."""
+    events = read_events(FIXTURES / "events.csv")
+    capsules = read_capsules(FIXTURES / "capsules.csv")
+    operating = read_operating(FIXTURES / "operating.csv")
+    analyzer_units = read_analyzer_units(FIXTURES / "analyzer_units.csv")
+    qa_windows = read_qa_windows(FIXTURES / "qa_windows.csv")
+    config = read_config(FIXTURES / "config.csv")
+
+    # The full span covered by operating.csv (Jan 1 – Feb 28).
+    cells = build_grid(events, capsules, operating, analyzer_units, qa_windows,
+                       config, _utc(2026, 1, 1, 0, 0), _utc(2026, 3, 1, 0, 0))
+    assert sum(1 for c in cells if c.Valid is CellValid.not_assessed) == 0
 
 
 def test_fixture_cems001_dismissed_matched_window_is_excused_from_detected_union():

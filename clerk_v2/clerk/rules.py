@@ -26,11 +26,15 @@ conditional config candidate). Do not implement here.
 
 SeeqCovered gate (Ryan, 2026-07-02): branch 5 — the normal-hour quadrant
 test, (i)/(ii) — may ONLY fire when SeeqCovered=true for the analyzer.
-When SeeqCovered=false and no branch 2/3/4 claims the hour, the cell is
-NOT-ASSESSED. Branches 2–4 ignore coverage.
+Branches 2–4 ignore coverage.
 
-HARD STOP (§5, still open): how NOT-ASSESSED rolls into availability% or the
-DAR denominator is undecided; no downstream aggregation may interpret it.
+RESOLVED (F4, was the §5 hard stop): at CBG every operating hour is
+assessed — by Seeq or manually. NOT-ASSESSED is therefore NOT a valid
+compliance outcome: an operating hour reaching the no-coverage/no-manual
+dead end is a roster or data-feed defect, and evaluate_hour FAILS LOUD
+(NotAssessedHourError) instead of emitting a silent state that a
+denominator could quietly exclude. The CellValid.not_assessed enum value
+survives only so grids written before this rule still parse.
 """
 from __future__ import annotations
 
@@ -235,10 +239,26 @@ def _branch_normal(ctx: HourContext) -> Tuple[CellValid, str]:
 # (Ryan, 2026-07-02); no longer provisional for branches (i)–(iv)
 # ---------------------------------------------------------------------------
 
+class NotAssessedHourError(Exception):
+    """F4: an operating hour reached the no-coverage/no-manual dead end.
+    Doctrine: at CBG every operating hour is assessed (Seeq or manual) —
+    this state indicates a roster or data-feed defect and must fail loud,
+    never flow silently into a denominator."""
+
+    def __init__(self, analyzer: str, hour_start: datetime):
+        self.analyzer = analyzer
+        self.hour_start = hour_start
+        super().__init__(
+            f"operating hour {hour_start.isoformat()} for {analyzer} has no "
+            f"assessment path (SeeqCovered=false, no manual/QA window, no "
+            f"validation event) — every CBG operating hour must be assessed; "
+            f"fix the roster coverage or the manual entries, do not suppress")
+
+
 def _branch_not_assessed(ctx: HourContext) -> Tuple[CellValid, str]:
-    """SeeqCovered=false with no manual window — detection-based assessment
-    is impossible; verdict is deferred until coverage is established."""
-    return CellValid.not_assessed, "not-assessed:no-seeq-coverage"
+    """F4: formerly emitted CellValid.not_assessed; now a hard error —
+    NOT-ASSESSED is not a valid compliance outcome (see module docstring)."""
+    raise NotAssessedHourError(ctx.analyzer, ctx.hour_start)
 
 
 def _branch_iii(ctx: HourContext) -> Tuple[CellValid, str]:

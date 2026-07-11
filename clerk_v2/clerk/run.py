@@ -42,13 +42,12 @@ and in CLAUDE.md:
    read as the full adjudicated record, not filtered to active tickets.
 
 3. pi_payload.csv Value encoding: valid/invalid map to 1.0/0.0
-   (uncontroversial). NOT-OPERATING and NOT-ASSESSED are left BLANK
-   (Value=None) rather than assigned a numeric code — NOT-ASSESSED's
-   encoding is directly entangled with the STILL-OPEN hard stop (how
-   NOT-ASSESSED rolls into availability%/DAR — grid.py/CLAUDE.md) and
-   inventing a number here would silently resolve it. Tag = Analyzer
-   1:1 — no real PI tag-mapping table exists yet (per docs/13's "still
-   missing" list); flagged as a placeholder.
+   (uncontroversial). NOT-OPERATING is left BLANK (Value=None). F4:
+   NOT-ASSESSED cannot occur in a fresh build (rules.NotAssessedHourError
+   fires instead); the blank handling for it is defensive only, for cells
+   read back from pre-F4 grids. Tag = Analyzer 1:1 — no real PI
+   tag-mapping table exists yet (per docs/13's "still missing" list);
+   flagged as a placeholder.
 """
 from __future__ import annotations
 
