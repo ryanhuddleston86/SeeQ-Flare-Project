@@ -199,3 +199,55 @@ def test_identical_inputs_twice_identical_output():
     r2 = run_delta(eps, caps, WIDE_WINDOW, RUN_AT)
     assert r1 == r2
 
+
+# ---------------------------------------------------------------------------
+# F6 — synthetic re-cover of the removed real-data drift pair's COMPOSITION
+#
+# W2 removed six drift tests because they read fixtures/real/*.csv. Their
+# individual behaviors (coalescing, boundary update, window scoping, exact
+# match, idempotence) were already covered synthetically above — but the
+# two-night COMPOSITION they proved end-to-end was not: night 1's abutting
+# pair coalesces into ONE episode, then night 2's partial-overlap capsule
+# trims it via a material BoundaryUpdate rather than withdrawing it, and
+# the whole thing reruns idempotently. This test restores that composition
+# with synthetic data.
+# ---------------------------------------------------------------------------
+
+def test_two_night_drift_composition_coalesce_then_trim_not_withdraw():
+    # Night 1: two abutting capsules (end == next start, the upstream norm)
+    # ingest as ONE continuous 00:00–17:00 episode.
+    night1 = [
+        _cap("A1", _utc(2026, 6, 9, 0), _utc(2026, 6, 9, 12)),
+        _cap("A1", _utc(2026, 6, 9, 12), _utc(2026, 6, 9, 17)),
+    ]
+    w1 = PullWindow(Night="1", PullStartUTC=_utc(2026, 6, 8, 18),
+                    PullEndUTC=_utc(2026, 6, 9, 18))
+    ingest = run_delta([], night1, w1, RUN_AT, id_prefix="N1")
+    episodes = episodes_from_detections(ingest.new_events)
+    assert len(episodes) == 1, "abutting pair must coalesce, not birth two tickets"
+    assert episodes[0].StartUTC == _utc(2026, 6, 9, 0)
+    assert episodes[0].EndUTC == _utc(2026, 6, 9, 17)
+
+    # Night 2: re-pull shows only 12:00–17:00 — the morning was a phantom.
+    # The capsule OVERLAPS the coalesced episode, so the writer must emit a
+    # material BoundaryUpdate (new extent, old extent riding along in
+    # Reason), and NO Withdrawn anywhere.
+    night2 = [_cap("A1", _utc(2026, 6, 9, 12), _utc(2026, 6, 9, 17))]
+    w2 = PullWindow(Night="2", PullStartUTC=_utc(2026, 6, 8, 18),
+                    PullEndUTC=_utc(2026, 6, 9, 18))
+    r = run_delta(episodes, night2, w2, RUN_AT, id_prefix="N2")
+    updates = [e for e in r.new_events if e.EventType is EventType.BoundaryUpdate]
+    assert len(updates) == 1
+    assert updates[0].ExtentStartUTC == _utc(2026, 6, 9, 12), "trimmed extent"
+    assert updates[0].ExtentEndUTC == _utc(2026, 6, 9, 17)
+    assert updates[0].TargetEventID, "binds to the surviving ticket"
+    assert updates[0].Actor == "clerk-delta", "machine-attributed"
+    assert "2026-06-09T00:00" in updates[0].Reason, "old extent rides along"
+    assert [e for e in r.new_events if e.EventType is EventType.Withdrawn] == [], \
+        "overlap means trim, never withdraw"
+    assert [e for e in r.new_events if e.EventType is not EventType.BoundaryUpdate] \
+        == [], "nothing but the single BoundaryUpdate"
+
+    # And the night-2 pass is idempotent.
+    assert run_delta(episodes, night2, w2, RUN_AT, id_prefix="N2") == r
+
