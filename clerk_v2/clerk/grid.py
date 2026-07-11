@@ -339,13 +339,20 @@ def build_grid(
         hour = window_start
         while hour < window_end:
             hour_end = hour + timedelta(hours=1)
+            # W9: diluent propagation — monitor effective downtime = own downtime
+            # OR diluent-down. A diluent outage (O2/CO2) renders its dependent
+            # pollutant monitors invalid for the same interval, even if the
+            # pollutant analyzer itself shows no direct detected-invalid window.
+            own_detected = detected_windows.get(au.Analyzer, [])
+            if au.DiluentBasis:
+                own_detected = own_detected + detected_windows.get(au.DiluentBasis, [])
             ctx = HourContext(
                 analyzer=au.Analyzer,
                 hour_start=hour,
                 seeq_covered=au.SeeqCovered,
                 operating=_clip(unit_windows, hour, hour_end),
                 manual_qa_windows=_clip(manual_windows.get(au.Analyzer, []), hour, hour_end),
-                detected_invalid_windows=_clip(detected_windows.get(au.Analyzer, []), hour, hour_end),
+                detected_invalid_windows=_clip(own_detected, hour, hour_end),
             )
             valid, rule_applied = evaluate_hour(ctx)
             operated = sum((e - s for s, e in ctx.operating), timedelta(0))
@@ -360,6 +367,24 @@ def build_grid(
             ))
             hour += timedelta(hours=1)
     return cells
+
+
+# ---------------------------------------------------------------------------
+# W7 — down-hour predicate
+# ---------------------------------------------------------------------------
+
+def is_down_hour(cell: GridCell) -> bool:
+    """Return True only when the cell represents a compliance down-hour.
+
+    A down-hour is one where the unit WAS operating but lacked sufficient
+    valid monitoring data (CellValid.invalid). CellValid.not_operating and
+    CellValid.not_assessed are NOT down-hours:
+    - not_operating: the unit wasn't running — excluded from the DAR
+      denominator entirely, not a deficiency to report.
+    - not_assessed: detection coverage is absent — an open question, not
+      a confirmed deficiency.
+    """
+    return cell.Valid is CellValid.invalid
 
 
 # ---------------------------------------------------------------------------

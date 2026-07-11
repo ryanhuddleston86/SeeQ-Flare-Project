@@ -19,6 +19,7 @@ from clerk.grid import (
     build_grid,
     capsule_provenance_id,
     contributing_observation_windows,
+    is_down_hour,
 )
 from clerk.rules import HourContext, evaluate_hour
 from clerk.schemas import (
@@ -581,6 +582,40 @@ def test_fixture_cems001_dismissed_matched_window_is_excused_from_detected_union
 
 
 # ---------------------------------------------------------------------------
+# W7 — is_down_hour: only CellValid.invalid counts as a compliance down-hour
+# ---------------------------------------------------------------------------
+
+def _make_cell(valid: CellValid) -> GridCell:
+    return GridCell(
+        Analyzer="A1",
+        HourStartUTC=_utc(2026, 1, 15, 8),
+        HourLocalLabel="",
+        OperatingFraction=1.0,
+        Valid=valid,
+        RuleApplied="(i)",
+        ContributingEventIDs=[],
+    )
+
+
+def test_invalid_cell_is_down_hour():
+    assert is_down_hour(_make_cell(CellValid.invalid)) is True
+
+
+def test_valid_cell_is_not_down_hour():
+    assert is_down_hour(_make_cell(CellValid.valid)) is False
+
+
+def test_not_operating_cell_is_not_down_hour():
+    """A unit not running is excluded from the DAR denominator — not a deficiency."""
+    assert is_down_hour(_make_cell(CellValid.not_operating)) is False
+
+
+def test_not_assessed_cell_is_not_down_hour():
+    """Detection coverage absent — an open question, not a confirmed down-hour."""
+    assert is_down_hour(_make_cell(CellValid.not_assessed)) is False
+
+
+# ---------------------------------------------------------------------------
 # W6 — backdate_to_last_passing (pure function, synthetic grid)
 # ---------------------------------------------------------------------------
 
@@ -644,3 +679,110 @@ def test_backdate_not_operating_does_not_count_as_passing():
 
 def test_backdate_empty_grid_returns_none():
     assert backdate_to_last_passing("A1", []) is None
+
+
+# ---------------------------------------------------------------------------
+# W9 — diluent propagation: detected-invalid on diluent propagates to dependents
+# ---------------------------------------------------------------------------
+
+def test_diluent_downtime_propagates_to_dependent_analyzer():
+    """When a diluent monitor (CO2) has a detected-invalid capsule, its
+    dependent pollutant analyzer must also read invalid — even though the
+    pollutant analyzer itself has no capsule or event for that hour."""
+    hour = _utc(2026, 4, 1, 8, 0)
+    hour_end = hour + timedelta(hours=1)
+    diluent_capsule = Capsule("CO2MON", "status-offline", hour, hour_end)
+    cells = build_grid(
+        events=[], capsules=[diluent_capsule],
+        operating_windows=[
+            OperatingWindow("U1", hour, hour_end),
+            OperatingWindow("U2", hour, hour_end),
+        ],
+        analyzer_units=[
+            AnalyzerUnit("CO2MON", "U2", SeeqCovered=True, DiluentsRole="CO2", DiluentBasis=""),
+            AnalyzerUnit("SO2MON", "U1", SeeqCovered=True, DiluentsRole="",    DiluentBasis="CO2MON"),
+        ],
+        qa_windows=[], config=_config(),
+        window_start=hour, window_end=hour_end,
+    )
+    by_analyzer = {c.Analyzer: c for c in cells}
+    assert by_analyzer["CO2MON"].Valid is CellValid.invalid, "diluent monitor itself is invalid"
+    assert by_analyzer["SO2MON"].Valid is CellValid.invalid, "propagated diluent outage makes dependent invalid"
+
+
+def test_clean_diluent_does_not_affect_dependent():
+    """A diluent monitor with no capsule/events (clean) must not flip the
+    dependent analyzer — clean diluent means no propagation."""
+    hour = _utc(2026, 4, 1, 8, 0)
+    hour_end = hour + timedelta(hours=1)
+    cells = build_grid(
+        events=[], capsules=[],  # no diluent downtime
+        operating_windows=[
+            OperatingWindow("U1", hour, hour_end),
+            OperatingWindow("U2", hour, hour_end),
+        ],
+        analyzer_units=[
+            AnalyzerUnit("CO2MON", "U2", SeeqCovered=True, DiluentsRole="CO2", DiluentBasis=""),
+            AnalyzerUnit("SO2MON", "U1", SeeqCovered=True, DiluentsRole="",    DiluentBasis="CO2MON"),
+        ],
+        qa_windows=[], config=_config(),
+        window_start=hour, window_end=hour_end,
+    )
+    by_analyzer = {c.Analyzer: c for c in cells}
+    assert by_analyzer["CO2MON"].Valid is CellValid.valid
+    assert by_analyzer["SO2MON"].Valid is CellValid.valid, "no diluent outage → dependent stays valid"
+
+
+def test_analyzer_without_diluent_basis_unaffected_by_diluent_downtime():
+    """An analyzer with no DiluentBasis must not pick up a diluent monitor's
+    downtime — propagation is opt-in via DiluentBasis field only."""
+    hour = _utc(2026, 4, 1, 8, 0)
+    hour_end = hour + timedelta(hours=1)
+    diluent_capsule = Capsule("CO2MON", "status-offline", hour, hour_end)
+    cells = build_grid(
+        events=[], capsules=[diluent_capsule],
+        operating_windows=[
+            OperatingWindow("U1", hour, hour_end),
+            OperatingWindow("U2", hour, hour_end),
+        ],
+        analyzer_units=[
+            AnalyzerUnit("CO2MON", "U2", SeeqCovered=True,  DiluentsRole="CO2", DiluentBasis=""),
+            AnalyzerUnit("NOXMON", "U1", SeeqCovered=True,  DiluentsRole="",    DiluentBasis=""),
+        ],
+        qa_windows=[], config=_config(),
+        window_start=hour, window_end=hour_end,
+    )
+    by_analyzer = {c.Analyzer: c for c in cells}
+    assert by_analyzer["NOXMON"].Valid is CellValid.valid, \
+        "NOXMON has no DiluentBasis — must not be affected by CO2MON downtime"
+
+
+def test_diluent_and_own_downtime_are_unioned():
+    """An analyzer with both its own capsule downtime AND a diluent outage
+    must be invalid for the union of both windows. This test uses a partial-
+    hour diluent capsule to confirm the union semantics (not just override)."""
+    hour = _utc(2026, 4, 1, 8, 0)
+    hour_end = hour + timedelta(hours=1)
+    # Diluent down for first 20 min; pollutant down for last 20 min.
+    # Together they consume 40 min of Q1+Q4, which under (i) leaves ≤20 min valid.
+    diluent_capsule = Capsule("CO2MON", "status-offline",
+                              hour, hour + timedelta(minutes=20))
+    own_capsule     = Capsule("SO2MON", "status-offline",
+                              hour + timedelta(minutes=40), hour_end)
+    cells = build_grid(
+        events=[], capsules=[diluent_capsule, own_capsule],
+        operating_windows=[
+            OperatingWindow("U1", hour, hour_end),
+            OperatingWindow("U2", hour, hour_end),
+        ],
+        analyzer_units=[
+            AnalyzerUnit("CO2MON", "U2", SeeqCovered=True, DiluentsRole="CO2", DiluentBasis=""),
+            AnalyzerUnit("SO2MON", "U1", SeeqCovered=True, DiluentsRole="",    DiluentBasis="CO2MON"),
+        ],
+        qa_windows=[], config=_config(),
+        window_start=hour, window_end=hour_end,
+    )
+    by_analyzer = {c.Analyzer: c for c in cells}
+    # SO2MON: Q1 (0-15) consumed by diluent outage, Q4 (45-60) consumed by own
+    # outage -> neither Q1 nor Q4 has valid data -> invalid under branch (i)
+    assert by_analyzer["SO2MON"].Valid is CellValid.invalid
