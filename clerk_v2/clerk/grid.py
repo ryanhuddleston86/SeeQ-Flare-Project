@@ -115,9 +115,17 @@ def _contributing(observations: List[Observation]):
     """Yield (analyzer, interval, observation) for every observation whose
     extent counts toward its analyzers' union. Guarantee A: every status
     EXCEPT Dismissed/Withdrawn/Superseded contributes — Needs review counts
-    exactly like Confirmed."""
+    exactly like Confirmed.
+
+    T8 (Doc 50): a START-ONLY entry (no ExtentEndUTC — e.g. a logged
+    'filter change' marker) is a recorded fact but NOT a window: it
+    contributes no invalid time and must never be read as open-ended
+    (infinite) downtime. Same guard for a missing start. The observation
+    itself still exists in the fold and the adjudicated output."""
     for obs in observations:
         if obs.status in _EXCLUDED_STATUSES:
+            continue
+        if obs.extent_start_utc is None or obs.extent_end_utc is None:
             continue
         interval = (obs.extent_start_utc, obs.extent_end_utc)
         for analyzer in obs.analyzers:
@@ -138,6 +146,57 @@ def contributing_observation_windows(observations: List[Observation]) -> Dict[st
 
 def _origin_types(events: List[Event]) -> Dict[str, EventType]:
     return {e.EventID: e.EventType for e in events if e.EventType in ORIGIN_TYPES}
+
+
+# ---------------------------------------------------------------------------
+# T2 wiring (Doc 50) — reason code → resolved CFR paragraph per hour
+# ---------------------------------------------------------------------------
+
+def _governing_reason(obs: Observation, events_by_id: Dict[str, Event]) -> Optional[str]:
+    """The observation's governing reason code: the LATEST non-blank
+    ReasonCode in its contributing-event history (same rule run.py uses
+    for adjudicated_condition rows)."""
+    for eid in reversed(obs.contributing_event_ids):
+        e = events_by_id.get(eid)
+        if e is not None and e.ReasonCode.strip():
+            return e.ReasonCode.strip()
+    return None
+
+
+def _reason_paragraph_windows(
+    observations: List[Observation],
+    events_by_id: Dict[str, Event],
+    config: SiteConfig,
+) -> Dict[str, List[Tuple[Interval, str]]]:
+    """Per analyzer: (interval, paragraph-label) for every contributing
+    observation whose governing reason code maps in ReasonParagraphMap.
+    This is what makes paragraph selection reason-driven end to end
+    (Doc 50 T2): the same invalid window folds under (iii) when the reason
+    is QA-01 but under (i) when it is MM-01."""
+    out: Dict[str, List[Tuple[Interval, str]]] = {}
+    for analyzer, interval, obs in _contributing(observations):
+        reason = _governing_reason(obs, events_by_id)
+        paragraph = config.ReasonParagraphMap.get(reason) if reason else None
+        if paragraph:
+            out.setdefault(analyzer, []).append((interval, paragraph))
+    return out
+
+
+def _resolve_hour_paragraph(
+    windows: List[Tuple[Interval, str]],
+    hour_start: datetime,
+    hour_end: datetime,
+) -> Optional[str]:
+    """The hour's resolved paragraph: the single distinct mapped label among
+    overlapping reason-mapped observations.
+    # FLAG: provisional — when observations with CONFLICTING mapped
+    # paragraphs overlap the same hour, resolution falls back to
+    # auto-selection (returns None). Which reason governs a contested hour
+    # is an open design question awaiting Ryan/SME."""
+    labels = {p for (s, e), p in windows if s < hour_end and hour_start < e}
+    if len(labels) == 1:
+        return labels.pop()
+    return None
 
 
 def _manual_and_detected_windows(
@@ -348,6 +407,10 @@ def build_grid(
     for v in validations:
         validations_by_analyzer.setdefault(v.Analyzer, []).append(v)
 
+    # T2: reason-driven paragraph selection, resolved per analyzer x hour.
+    events_by_id = {e.EventID: e for e in events}
+    reason_windows = _reason_paragraph_windows(observations, events_by_id, config)
+
     operating_by_unit = _operating_by_unit(operating_windows)
     provenance = _provenance_index(observations, capsules)
 
@@ -385,6 +448,8 @@ def build_grid(
                 detected_invalid_windows=_clip(own_detected, hour, hour_end),
                 failed_cal_at=failed_cal_at,
                 passing_cal_at=passing_cal_at,
+                resolved_paragraph=_resolve_hour_paragraph(
+                    reason_windows.get(au.Analyzer, []), hour, hour_end),
             )
             valid, rule_applied = evaluate_hour(ctx)
             operated = sum((e - s for s, e in ctx.operating), timedelta(0))

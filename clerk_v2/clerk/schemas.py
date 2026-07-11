@@ -197,7 +197,7 @@ class AdjudicatedCondition:
     docstring for the flagged scope/shape choices)."""
     Analyzer: str
     ConditionStartUTC: datetime
-    ConditionEndUTC: datetime
+    ConditionEndUTC: Optional[datetime]   # None for a start-only entry (T8)
     Status: str
     ReasonCode: str
     RuleApplied: List[str]      # distinct branch labels observed across the episode's hours
@@ -491,7 +491,8 @@ def write_adjudicated_condition(path: Path, rows: List[AdjudicatedCondition]) ->
             w.writerow({
                 "Analyzer": r.Analyzer,
                 "ConditionStartUTC": r.ConditionStartUTC.isoformat(),
-                "ConditionEndUTC": r.ConditionEndUTC.isoformat(),
+                # T8: blank for a start-only entry (recorded marker, no window)
+                "ConditionEndUTC": r.ConditionEndUTC.isoformat() if r.ConditionEndUTC else "",
                 "Status": r.Status,
                 "ReasonCode": r.ReasonCode,
                 "RuleApplied": ";".join(r.RuleApplied),

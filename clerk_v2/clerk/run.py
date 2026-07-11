@@ -117,10 +117,14 @@ def _adjudicated_condition_rows(
     rows: List[AdjudicatedCondition] = []
     for obs in observations:
         reason_code = _last_nonblank_reason_code(obs, events_by_id)
+        # T8: a start-only entry has no window — zero overlapping hours,
+        # but the row itself is still recorded (blank end in the CSV).
+        extent_end = obs.extent_end_utc or obs.extent_start_utc
         for analyzer in obs.analyzers:
             overlapping_rules = sorted({
                 c.RuleApplied for c in cells_by_analyzer.get(analyzer, [])
-                if c.HourStartUTC < obs.extent_end_utc
+                if extent_end is not None
+                and c.HourStartUTC < extent_end
                 and obs.extent_start_utc < c.HourStartUTC + timedelta(hours=1)
             })
             rows.append(AdjudicatedCondition(
