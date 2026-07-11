@@ -17,7 +17,7 @@ Pull-window scoping (spec open item 7, made concrete by the drift pair):
 Withdrawn may only be emitted for episodes fully INSIDE the run's pull window.
 Absence of a capsule outside the pulled range is not evidence of anything.
 
-Fail-safe polarity notes:
+Accuracy-first polarity notes:
 - A matching failure can produce a duplicate ticket, never an understated hour
   (the grid consumes capsules directly; tickets are not math inputs).
 - Confirmed episodes never withdraw — the human assertion stands and the

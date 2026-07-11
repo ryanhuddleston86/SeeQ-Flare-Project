@@ -17,7 +17,7 @@ appended, exactly as production is designed to work.
 
 FLAGGED, not blocking — three open interpretive choices made to hit
 tonight's synthetic-green target, none of them touching a SS5 hard-stop
-category (verbatim/precedence/fail-safe/new-state), all documented here
+category (verbatim/precedence/new-state), all documented here
 and in CLAUDE.md:
 
 1. Run window from LookbackMonths: `_months_before` snaps to the 1st of

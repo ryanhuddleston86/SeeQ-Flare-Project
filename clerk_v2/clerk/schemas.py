@@ -107,9 +107,8 @@ class OperatingWindow:
 class AnalyzerUnit:
     Analyzer: str
     Unit: str
-    # Whether Seeq detection actually covers this analyzer. Fail-safe default
-    # is false: only an explicit "true" in the fixture enables the rule
-    # engine's normal-hour branch (5) for the analyzer.
+    # Whether Seeq detection covers this analyzer. Default is false — only an
+    # explicit "true" in the fixture enables the rule engine's Seeq branch.
     SeeqCovered: bool = False
 
 

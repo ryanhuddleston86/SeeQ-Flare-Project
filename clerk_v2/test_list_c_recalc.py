@@ -158,14 +158,26 @@ def test_new_record_added_is_reflected_in_modified_calc():
 
 
 # ---------------------------------------------------------------------------
-# Bonus: status is deliberately NOT filtered
+# D2: Only Approved records contribute; Pending and Rejected contribute zero
 # ---------------------------------------------------------------------------
 
-def test_all_statuses_included_in_calc():
+def test_only_approved_records_counted():
     records = [
         make_record("r1", JAN, hours=2.0, status="Approved"),
         make_record("r2", JAN, hours=3.0, status="Pending"),
         make_record("r3", JAN, hours=1.0, status="Rejected"),
     ]
     result = compute_modified_calc(records)
-    assert result[(2025, 1)] == pytest.approx(6.0), "all statuses must be summed"
+    assert result[(2025, 1)] == pytest.approx(2.0), "only Approved hours count"
+
+
+def test_pending_only_produces_no_output():
+    records = [make_record("r1", JAN, hours=5.0, status="Pending")]
+    result = compute_modified_calc(records)
+    assert result == {}, "pending-only month must not appear in calc output"
+
+
+def test_rejected_only_produces_no_output():
+    records = [make_record("r1", JAN, hours=4.0, status="Rejected")]
+    result = compute_modified_calc(records)
+    assert result == {}, "rejected-only month must not appear in calc output"

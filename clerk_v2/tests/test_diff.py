@@ -217,7 +217,7 @@ def test_missing_observation_is_integrity_alert():
 
 def test_empty_contributing_event_ids_is_integrity_alert():
     """No provenance recorded at all (neither ticket nor capsule id) —
-    conservatively alerts rather than silently passing."""
+    alerts rather than silently passing."""
     prior = [_cell("A1", HOUR, CellValid.invalid, [])]
     current = [_cell("A1", HOUR, CellValid.valid)]
     result = _diff(prior, current, [])

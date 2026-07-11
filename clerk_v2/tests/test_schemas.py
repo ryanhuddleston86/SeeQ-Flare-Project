@@ -196,7 +196,7 @@ def test_seeq_covered_true_only_for_lube_channels():
 
 
 def test_seeq_covered_defaults_false_when_column_absent(tmp_path):
-    """Fail-safe default: a fixture without the column means NOT covered."""
+    """Absent SeeqCovered column means NOT covered by default."""
     p = tmp_path / "analyzer_units.csv"
     p.write_text("Analyzer,Unit\nX-1,U-1\n")
     units = read_analyzer_units(p)

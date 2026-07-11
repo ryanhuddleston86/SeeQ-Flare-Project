@@ -88,8 +88,8 @@ def test_superseded_contributes_nothing():
 
 
 def test_dismissal_pending_still_contributes():
-    """Fail-safe polarity: unadjudicated downtime counts immediately.
-    Dismissal-pending has NOT been approved yet — it still counts."""
+    """Guarantee A: dismissal-pending has NOT been approved — it still counts
+    toward the union until a Dismissed or Approval event closes it."""
     pending = _obs("E6", Status.dismissal_pending, *EXTENT)
     result = contributing_observation_windows([pending])
     assert result == {"A1": [EXTENT]}

@@ -7,7 +7,7 @@ Models List C as a collection of downtime records and computes two calcs:
 
 Aggregate: total downtime hours per calendar month, grouped by the month the
 downtime record *starts* in. Duration = (end - start) in fractional hours.
-No status filtering — all records are included regardless of status, by design.
+Only Approved records contribute — Pending and Rejected records count as zero.
 """
 
 from dataclasses import dataclass
@@ -34,10 +34,13 @@ class DowntimeRecord:
 def compute_modified_calc(records: List[DowntimeRecord]) -> CalcResult:
     """
     Pure function: given the current List C state, return total downtime hours
-    per calendar month. Stateless — no accumulation between calls.
+    per calendar month. Only Approved records contribute; Pending and Rejected
+    records are excluded. Stateless — no accumulation between calls.
     """
     totals: CalcResult = {}
     for rec in records:
+        if rec.status != "Approved":
+            continue
         key: MonthKey = (rec.start.year, rec.start.month)
         totals[key] = totals.get(key, 0.0) + rec.duration_hours()
     return totals
