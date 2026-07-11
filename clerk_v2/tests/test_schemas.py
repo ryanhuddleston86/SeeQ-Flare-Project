@@ -212,6 +212,36 @@ def test_seeq_covered_blank_and_junk_are_false(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# W8 — diluent-role and diluent-basis fields
+# ---------------------------------------------------------------------------
+
+def test_diluent_role_read_from_fixture():
+    units = {u.Analyzer: u for u in read_analyzer_units(FIXTURES / "analyzer_units.csv")}
+    assert units["CEMS-003"].DiluentsRole == "CO2"
+
+
+def test_diluent_basis_read_from_fixture():
+    units = {u.Analyzer: u for u in read_analyzer_units(FIXTURES / "analyzer_units.csv")}
+    assert units["CEMS-001"].DiluentBasis == "CEMS-003"
+    assert units["CEMS-002"].DiluentBasis == "CEMS-003"
+
+
+def test_diluent_fields_blank_for_non_diluent():
+    units = {u.Analyzer: u for u in read_analyzer_units(FIXTURES / "analyzer_units.csv")}
+    assert units["LUBEFLR-NHV-BTU"].DiluentsRole == ""
+    assert units["LUBEFLR-NHV-BTU"].DiluentBasis == ""
+
+
+def test_diluent_fields_absent_column_defaults_to_empty(tmp_path):
+    """Fixture without DiluentsRole/DiluentBasis columns gets empty-string defaults."""
+    p = tmp_path / "analyzer_units.csv"
+    p.write_text("Analyzer,Unit,SeeqCovered\nX-1,U-1,false\n")
+    units = read_analyzer_units(p)
+    assert units[0].DiluentsRole == ""
+    assert units[0].DiluentBasis == ""
+
+
+# ---------------------------------------------------------------------------
 # QA windows
 # ---------------------------------------------------------------------------
 

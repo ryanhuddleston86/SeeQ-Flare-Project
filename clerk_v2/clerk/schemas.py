@@ -110,6 +110,13 @@ class AnalyzerUnit:
     # Whether Seeq detection covers this analyzer. Default is false — only an
     # explicit "true" in the fixture enables the rule engine's Seeq branch.
     SeeqCovered: bool = False
+    # W8: diluent-role — if non-empty, this analyzer IS a diluent monitor.
+    # Expected values: "O2", "CO2", or "" (not a diluent).
+    DiluentsRole: str = ""
+    # W8: diluent-basis — Analyzer ID of the diluent monitor this pollutant
+    # analyzer depends on. Empty for diluent monitors themselves and for
+    # analyzers that have no diluent dependency.
+    DiluentBasis: str = ""
 
 
 @dataclass
@@ -251,6 +258,9 @@ def read_analyzer_units(path: Path) -> List[AnalyzerUnit]:
                 # default false unless explicitly marked true — missing column
                 # or blank cell means NOT covered
                 SeeqCovered=(r.get("SeeqCovered") or "").strip().lower() == "true",
+                # W8: diluent fields — blank/absent columns default to ""
+                DiluentsRole=(r.get("DiluentsRole") or "").strip(),
+                DiluentBasis=(r.get("DiluentBasis") or "").strip(),
             ))
     return rows
 
