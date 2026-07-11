@@ -96,6 +96,9 @@ from clerk.schemas import (
     SiteConfig,
 )
 
+# W10 type alias
+SourceDownHours = Dict[str, List[datetime]]
+
 Interval = Tuple[datetime, datetime]
 
 _EXCLUDED_STATUSES = frozenset({Status.dismissed, Status.withdrawn, Status.superseded})
@@ -390,6 +393,57 @@ def is_down_hour(cell: GridCell) -> bool:
 # ---------------------------------------------------------------------------
 # W6 — backdate-to-last-passing
 # ---------------------------------------------------------------------------
+
+def source_down_hours(
+    analyzer_units: List[AnalyzerUnit],
+    cells: List[GridCell],
+) -> SourceDownHours:
+    """W10: Source-level downtime = intersection (AND) of all analyzer
+    downtimes for each unit (D9: Monitor vs source downtime).
+
+    A source is 'down' for a given hour only when EVERY analyzer assigned
+    to that unit simultaneously shows CellValid.invalid. Hours where any
+    analyzer is not_operating are excluded — the source was not operating
+    that hour and the hour does not belong in the DAR denominator. Hours
+    where any analyzer is not_assessed are also excluded — insufficient
+    coverage to assert a source-level verdict.
+
+    Gated by coverage: only hours where EVERY analyzer for the unit has
+    an explicit grid cell are evaluated (an analyzer absent from the grid
+    for that hour means the hour is outside the build window and should
+    not be claimed as source-down).
+
+    Returns {unit: [hour_start_utc, ...]} in ascending order per unit.
+    Units with no source-down hours are absent from the result.
+    """
+    unit_to_analyzers: Dict[str, List[str]] = {}
+    for au in analyzer_units:
+        unit_to_analyzers.setdefault(au.Unit, []).append(au.Analyzer)
+
+    cell_status: Dict[Tuple[str, datetime], CellValid] = {
+        (c.Analyzer, c.HourStartUTC): c.Valid for c in cells
+    }
+    all_hours = sorted({c.HourStartUTC for c in cells})
+
+    result: SourceDownHours = {}
+    for unit, analyzers in unit_to_analyzers.items():
+        down: List[datetime] = []
+        for hour in all_hours:
+            statuses = [cell_status.get((a, hour)) for a in analyzers]
+            # Skip if any analyzer has no cell this hour (outside build window)
+            if None in statuses:
+                continue
+            # Skip non-operating and not-assessed hours — coverage gate
+            if any(s in (CellValid.not_operating, CellValid.not_assessed)
+                   for s in statuses):
+                continue
+            # Source-down = ALL analyzers simultaneously invalid (AND/intersection)
+            if all(s is CellValid.invalid for s in statuses):
+                down.append(hour)
+        if down:
+            result[unit] = down
+    return result
+
 
 def backdate_to_last_passing(analyzer: str, grid: List[GridCell]) -> Optional[datetime]:
     """Return the HourStartUTC of the most recent CellValid.valid cell for

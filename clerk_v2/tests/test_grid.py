@@ -20,6 +20,7 @@ from clerk.grid import (
     capsule_provenance_id,
     contributing_observation_windows,
     is_down_hour,
+    source_down_hours,
 )
 from clerk.rules import HourContext, evaluate_hour
 from clerk.schemas import (
@@ -786,3 +787,125 @@ def test_diluent_and_own_downtime_are_unioned():
     # SO2MON: Q1 (0-15) consumed by diluent outage, Q4 (45-60) consumed by own
     # outage -> neither Q1 nor Q4 has valid data -> invalid under branch (i)
     assert by_analyzer["SO2MON"].Valid is CellValid.invalid
+
+
+# ---------------------------------------------------------------------------
+# W10 — source_down_hours: intersection (AND) of all analyzer downtimes per unit
+# ---------------------------------------------------------------------------
+
+def _make_cell_full(analyzer, hour, valid: CellValid) -> GridCell:
+    return GridCell(
+        Analyzer=analyzer,
+        HourStartUTC=hour,
+        HourLocalLabel="",
+        OperatingFraction=1.0,
+        Valid=valid,
+        RuleApplied="(i)",
+        ContributingEventIDs=[],
+    )
+
+
+def test_source_down_only_when_all_analyzers_invalid():
+    """Source is down only when ALL its analyzers are simultaneously invalid."""
+    hour = _utc(2026, 4, 1, 8, 0)
+    units = [
+        AnalyzerUnit("A1", "U1", SeeqCovered=True),
+        AnalyzerUnit("A2", "U1", SeeqCovered=True),
+    ]
+    cells = [
+        _make_cell_full("A1", hour, CellValid.invalid),
+        _make_cell_full("A2", hour, CellValid.invalid),  # both down
+    ]
+    result = source_down_hours(units, cells)
+    assert result == {"U1": [hour]}
+
+
+def test_source_not_down_when_only_one_analyzer_invalid():
+    """One analyzer invalid, one valid → NOT a source-down hour (AND gate)."""
+    hour = _utc(2026, 4, 1, 8, 0)
+    units = [
+        AnalyzerUnit("A1", "U1", SeeqCovered=True),
+        AnalyzerUnit("A2", "U1", SeeqCovered=True),
+    ]
+    cells = [
+        _make_cell_full("A1", hour, CellValid.invalid),
+        _make_cell_full("A2", hour, CellValid.valid),   # A2 still valid
+    ]
+    result = source_down_hours(units, cells)
+    assert "U1" not in result, "partial downtime is not a source-down hour"
+
+
+def test_not_operating_hours_excluded_from_source_down():
+    """not_operating hours are outside the coverage gate — not source-down."""
+    hour = _utc(2026, 4, 1, 8, 0)
+    units = [
+        AnalyzerUnit("A1", "U1", SeeqCovered=True),
+        AnalyzerUnit("A2", "U1", SeeqCovered=True),
+    ]
+    cells = [
+        _make_cell_full("A1", hour, CellValid.not_operating),
+        _make_cell_full("A2", hour, CellValid.not_operating),
+    ]
+    result = source_down_hours(units, cells)
+    assert result == {}, "unit not running — not a source-down hour"
+
+
+def test_not_assessed_hours_excluded_from_source_down():
+    """not_assessed on any analyzer: insufficient coverage → not source-down."""
+    hour = _utc(2026, 4, 1, 8, 0)
+    units = [
+        AnalyzerUnit("A1", "U1", SeeqCovered=True),
+        AnalyzerUnit("A2", "U1", SeeqCovered=False),
+    ]
+    cells = [
+        _make_cell_full("A1", hour, CellValid.invalid),
+        _make_cell_full("A2", hour, CellValid.not_assessed),
+    ]
+    result = source_down_hours(units, cells)
+    assert result == {}, "not_assessed blocks source-down verdict"
+
+
+def test_source_down_hours_multi_hour_intersection():
+    """Only the hour where ALL analyzers are simultaneously invalid appears."""
+    base = _utc(2026, 4, 1, 8, 0)
+    h0, h1, h2 = base, base + timedelta(hours=1), base + timedelta(hours=2)
+    units = [
+        AnalyzerUnit("A1", "U1", SeeqCovered=True),
+        AnalyzerUnit("A2", "U1", SeeqCovered=True),
+    ]
+    cells = [
+        # h0: A1 invalid, A2 valid → NOT source-down
+        _make_cell_full("A1", h0, CellValid.invalid),
+        _make_cell_full("A2", h0, CellValid.valid),
+        # h1: both invalid → source-down
+        _make_cell_full("A1", h1, CellValid.invalid),
+        _make_cell_full("A2", h1, CellValid.invalid),
+        # h2: both valid → NOT source-down
+        _make_cell_full("A1", h2, CellValid.valid),
+        _make_cell_full("A2", h2, CellValid.valid),
+    ]
+    result = source_down_hours(units, cells)
+    assert result == {"U1": [h1]}
+
+
+def test_source_down_hours_multiple_units_independent():
+    """Each unit's source-down hours are computed independently."""
+    hour = _utc(2026, 4, 1, 8, 0)
+    units = [
+        AnalyzerUnit("A1", "U1", SeeqCovered=True),
+        AnalyzerUnit("B1", "U2", SeeqCovered=True),
+    ]
+    cells = [
+        _make_cell_full("A1", hour, CellValid.invalid),  # U1 only has one analyzer → down
+        _make_cell_full("B1", hour, CellValid.valid),    # U2 only has one analyzer → valid
+    ]
+    result = source_down_hours(units, cells)
+    assert "U1" in result and hour in result["U1"]
+    assert "U2" not in result
+
+
+def test_source_down_hours_returns_empty_when_no_downtime():
+    hour = _utc(2026, 4, 1, 8, 0)
+    units = [AnalyzerUnit("A1", "U1", SeeqCovered=True)]
+    cells = [_make_cell_full("A1", hour, CellValid.valid)]
+    assert source_down_hours(units, cells) == {}
