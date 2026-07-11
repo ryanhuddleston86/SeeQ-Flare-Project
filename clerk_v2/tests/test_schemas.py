@@ -171,9 +171,11 @@ def test_read_operating():
 
 def test_read_analyzer_units():
     units = read_analyzer_units(FIXTURES / "analyzer_units.csv")
-    assert len(units) == 6
+    # 8 rows since F5 added the O2-based pair (CEMS-O2-001 diluent monitor,
+    # CEMS-004 dependent) to exercise both diluent species.
+    assert len(units) == 8
     analyzers = {u.Analyzer for u in units}
-    assert {"CEMS-001", "CEMS-002", "CEMS-003",
+    assert {"CEMS-001", "CEMS-002", "CEMS-003", "CEMS-O2-001", "CEMS-004",
             "LUBEFLR-NHV-BTU", "LUBEFLR-H2S-PCT", "LUBEFLR-H2S-PPM"} == analyzers
 
 
@@ -212,33 +214,81 @@ def test_seeq_covered_blank_and_junk_are_false(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# W8 — diluent-role and diluent-basis fields
+# W8/F5 — diluent role (three-value), species label, and basis pointer
 # ---------------------------------------------------------------------------
 
-def test_diluent_role_read_from_fixture():
-    units = {u.Analyzer: u for u in read_analyzer_units(FIXTURES / "analyzer_units.csv")}
-    assert units["CEMS-003"].DiluentsRole == "CO2"
+def _units_by_analyzer():
+    return {u.Analyzer: u for u in read_analyzer_units(FIXTURES / "analyzer_units.csv")}
+
+
+def test_diluent_role_is_three_value_vocabulary():
+    """F5: every roster row carries an explicit role from
+    {diluent, diluent-corrected, not-diluent-corrected}."""
+    from clerk.schemas import DILUENT_ROLES
+    units = _units_by_analyzer()
+    assert all(u.DiluentsRole in DILUENT_ROLES for u in units.values())
+    assert units["CEMS-003"].DiluentsRole == "diluent"
+    assert units["CEMS-001"].DiluentsRole == "diluent-corrected"
+    assert units["LUBEFLR-NHV-BTU"].DiluentsRole == "not-diluent-corrected"
+
+
+def test_diluent_species_label_read_from_fixture():
+    """F5: the species is an explicit {O2, CO2} label, carried on both the
+    diluent monitor and its dependents — not only inferable via the pointer."""
+    units = _units_by_analyzer()
+    assert units["CEMS-003"].DiluentSpecies == "CO2"
+    assert units["CEMS-001"].DiluentSpecies == "CO2"
+    assert units["CEMS-002"].DiluentSpecies == "CO2"
+    assert units["LUBEFLR-NHV-BTU"].DiluentSpecies == ""
+
+
+def test_fixture_contains_an_o2_based_source():
+    """F5: the roster must exercise BOTH species — CEMS-O2-001 is the O2
+    diluent monitor and CEMS-004 depends on it."""
+    units = _units_by_analyzer()
+    assert units["CEMS-O2-001"].DiluentsRole == "diluent"
+    assert units["CEMS-O2-001"].DiluentSpecies == "O2"
+    assert units["CEMS-004"].DiluentsRole == "diluent-corrected"
+    assert units["CEMS-004"].DiluentSpecies == "O2"
+    assert units["CEMS-004"].DiluentBasis == "CEMS-O2-001"
 
 
 def test_diluent_basis_read_from_fixture():
-    units = {u.Analyzer: u for u in read_analyzer_units(FIXTURES / "analyzer_units.csv")}
+    units = _units_by_analyzer()
     assert units["CEMS-001"].DiluentBasis == "CEMS-003"
     assert units["CEMS-002"].DiluentBasis == "CEMS-003"
 
 
 def test_diluent_fields_blank_for_non_diluent():
-    units = {u.Analyzer: u for u in read_analyzer_units(FIXTURES / "analyzer_units.csv")}
-    assert units["LUBEFLR-NHV-BTU"].DiluentsRole == ""
+    units = _units_by_analyzer()
+    assert units["LUBEFLR-NHV-BTU"].DiluentsRole == "not-diluent-corrected"
     assert units["LUBEFLR-NHV-BTU"].DiluentBasis == ""
 
 
-def test_diluent_fields_absent_column_defaults_to_empty(tmp_path):
-    """Fixture without DiluentsRole/DiluentBasis columns gets empty-string defaults."""
+def test_diluent_fields_absent_column_defaults(tmp_path):
+    """F5: a fixture without the diluent columns normalizes to the explicit
+    'not-diluent-corrected' role (no silent empty-string state) and blank
+    species/basis."""
     p = tmp_path / "analyzer_units.csv"
     p.write_text("Analyzer,Unit,SeeqCovered\nX-1,U-1,false\n")
     units = read_analyzer_units(p)
-    assert units[0].DiluentsRole == ""
+    assert units[0].DiluentsRole == "not-diluent-corrected"
+    assert units[0].DiluentSpecies == ""
     assert units[0].DiluentBasis == ""
+
+
+def test_unknown_diluent_role_fails_loud(tmp_path):
+    p = tmp_path / "analyzer_units.csv"
+    p.write_text("Analyzer,Unit,SeeqCovered,DiluentsRole\nX-1,U-1,false,CO2\n")
+    with pytest.raises(ValueError, match="DiluentsRole"):
+        read_analyzer_units(p)  # old W8 species-in-role encoding must not parse
+
+
+def test_unknown_diluent_species_fails_loud(tmp_path):
+    p = tmp_path / "analyzer_units.csv"
+    p.write_text("Analyzer,Unit,DiluentsRole,DiluentSpecies\nX-1,U-1,diluent,N2\n")
+    with pytest.raises(ValueError, match="DiluentSpecies"):
+        read_analyzer_units(p)
 
 
 # ---------------------------------------------------------------------------

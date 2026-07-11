@@ -103,6 +103,11 @@ class OperatingWindow:
     EndUTC: datetime
 
 
+# F5: the explicit three-value diluent role vocabulary.
+DILUENT_ROLES = frozenset({"diluent", "diluent-corrected", "not-diluent-corrected"})
+DILUENT_SPECIES = frozenset({"O2", "CO2", ""})
+
+
 @dataclass
 class AnalyzerUnit:
     Analyzer: str
@@ -110,12 +115,19 @@ class AnalyzerUnit:
     # Whether Seeq detection covers this analyzer. Default is false — only an
     # explicit "true" in the fixture enables the rule engine's Seeq branch.
     SeeqCovered: bool = False
-    # W8: diluent-role — if non-empty, this analyzer IS a diluent monitor.
-    # Expected values: "O2", "CO2", or "" (not a diluent).
-    DiluentsRole: str = ""
+    # W8/F5: three-value role — "diluent" (this analyzer IS the O2/CO2
+    # monitor), "diluent-corrected" (a pollutant analyzer whose reading is
+    # corrected using a diluent monitor), or "not-diluent-corrected"
+    # (no diluent involvement; the default).
+    DiluentsRole: str = "not-diluent-corrected"
+    # F5: the diluent species as an explicit {O2, CO2} label. On a diluent
+    # monitor: its own species. On a diluent-corrected analyzer: the species
+    # of the monitor it depends on. "" for not-diluent-corrected.
+    DiluentSpecies: str = ""
     # W8: diluent-basis — Analyzer ID of the diluent monitor this pollutant
-    # analyzer depends on. Empty for diluent monitors themselves and for
-    # analyzers that have no diluent dependency.
+    # analyzer depends on (the direct dependency pointer, kept per F5).
+    # Empty for diluent monitors themselves and for analyzers that have no
+    # diluent dependency.
     DiluentBasis: str = ""
 
 
@@ -252,14 +264,27 @@ def read_analyzer_units(path: Path) -> List[AnalyzerUnit]:
     rows: List[AnalyzerUnit] = []
     with open(path, newline="") as f:
         for r in csv.DictReader(f):
+            # F5: blank/absent role means no diluent involvement — normalize
+            # to the explicit vocabulary value; reject anything else loudly.
+            role = (r.get("DiluentsRole") or "").strip() or "not-diluent-corrected"
+            if role not in DILUENT_ROLES:
+                raise ValueError(
+                    f"analyzer_units.csv: unknown DiluentsRole {role!r} for "
+                    f"{r['Analyzer']} — expected one of {sorted(DILUENT_ROLES)}")
+            species = (r.get("DiluentSpecies") or "").strip()
+            if species not in DILUENT_SPECIES:
+                raise ValueError(
+                    f"analyzer_units.csv: unknown DiluentSpecies {species!r} for "
+                    f"{r['Analyzer']} — expected O2, CO2, or blank")
             rows.append(AnalyzerUnit(
                 Analyzer=r["Analyzer"],
                 Unit=r["Unit"],
                 # default false unless explicitly marked true — missing column
                 # or blank cell means NOT covered
                 SeeqCovered=(r.get("SeeqCovered") or "").strip().lower() == "true",
-                # W8: diluent fields — blank/absent columns default to ""
-                DiluentsRole=(r.get("DiluentsRole") or "").strip(),
+                DiluentsRole=role,
+                DiluentSpecies=species,
+                # W8: dependency pointer — blank/absent column defaults to ""
                 DiluentBasis=(r.get("DiluentBasis") or "").strip(),
             ))
     return rows

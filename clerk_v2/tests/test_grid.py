@@ -546,7 +546,7 @@ def test_fixture_set_builds_without_error():
     window_end = _utc(2026, 1, 1, 3, 0)
     cells = build_grid(events, capsules, operating, analyzer_units, qa_windows,
                        config, window_start, window_end)
-    assert len(cells) == 6 * 3  # 6 analyzers x 3 hours
+    assert len(cells) == 8 * 3  # 8 analyzers (F5 added the O2 pair) x 3 hours
     assert all(isinstance(c.Valid, CellValid) for c in cells)
 
 
@@ -700,8 +700,8 @@ def test_diluent_downtime_propagates_to_dependent_analyzer():
             OperatingWindow("U2", hour, hour_end),
         ],
         analyzer_units=[
-            AnalyzerUnit("CO2MON", "U2", SeeqCovered=True, DiluentsRole="CO2", DiluentBasis=""),
-            AnalyzerUnit("SO2MON", "U1", SeeqCovered=True, DiluentsRole="",    DiluentBasis="CO2MON"),
+            AnalyzerUnit("CO2MON", "U2", SeeqCovered=True, DiluentsRole="diluent", DiluentSpecies="CO2", DiluentBasis=""),
+            AnalyzerUnit("SO2MON", "U1", SeeqCovered=True, DiluentsRole="diluent-corrected", DiluentSpecies="CO2", DiluentBasis="CO2MON"),
         ],
         qa_windows=[], config=_config(),
         window_start=hour, window_end=hour_end,
@@ -723,8 +723,8 @@ def test_clean_diluent_does_not_affect_dependent():
             OperatingWindow("U2", hour, hour_end),
         ],
         analyzer_units=[
-            AnalyzerUnit("CO2MON", "U2", SeeqCovered=True, DiluentsRole="CO2", DiluentBasis=""),
-            AnalyzerUnit("SO2MON", "U1", SeeqCovered=True, DiluentsRole="",    DiluentBasis="CO2MON"),
+            AnalyzerUnit("CO2MON", "U2", SeeqCovered=True, DiluentsRole="diluent", DiluentSpecies="CO2", DiluentBasis=""),
+            AnalyzerUnit("SO2MON", "U1", SeeqCovered=True, DiluentsRole="diluent-corrected", DiluentSpecies="CO2", DiluentBasis="CO2MON"),
         ],
         qa_windows=[], config=_config(),
         window_start=hour, window_end=hour_end,
@@ -747,8 +747,8 @@ def test_analyzer_without_diluent_basis_unaffected_by_diluent_downtime():
             OperatingWindow("U2", hour, hour_end),
         ],
         analyzer_units=[
-            AnalyzerUnit("CO2MON", "U2", SeeqCovered=True,  DiluentsRole="CO2", DiluentBasis=""),
-            AnalyzerUnit("NOXMON", "U1", SeeqCovered=True,  DiluentsRole="",    DiluentBasis=""),
+            AnalyzerUnit("CO2MON", "U2", SeeqCovered=True,  DiluentsRole="diluent", DiluentSpecies="CO2", DiluentBasis=""),
+            AnalyzerUnit("NOXMON", "U1", SeeqCovered=True,  DiluentsRole="not-diluent-corrected", DiluentBasis=""),
         ],
         qa_windows=[], config=_config(),
         window_start=hour, window_end=hour_end,
@@ -777,8 +777,8 @@ def test_diluent_and_own_downtime_are_unioned():
             OperatingWindow("U2", hour, hour_end),
         ],
         analyzer_units=[
-            AnalyzerUnit("CO2MON", "U2", SeeqCovered=True, DiluentsRole="CO2", DiluentBasis=""),
-            AnalyzerUnit("SO2MON", "U1", SeeqCovered=True, DiluentsRole="",    DiluentBasis="CO2MON"),
+            AnalyzerUnit("CO2MON", "U2", SeeqCovered=True, DiluentsRole="diluent", DiluentSpecies="CO2", DiluentBasis=""),
+            AnalyzerUnit("SO2MON", "U1", SeeqCovered=True, DiluentsRole="diluent-corrected", DiluentSpecies="CO2", DiluentBasis="CO2MON"),
         ],
         qa_windows=[], config=_config(),
         window_start=hour, window_end=hour_end,
