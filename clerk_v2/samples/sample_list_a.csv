@@ -1,0 +1,3 @@
+Analyzer,StartUTC,EndUTC,ReasonCode,Tech,Note
+NOX-01,2026-04-01T09:20:00Z,2026-04-01T09:40:00Z,QA-01,jsmith,Quarterly CGA - probe cleaning
+NOX-01,2026-04-01T13:05:00Z,,QA-01,jsmith,Filter change (start-only marker)
