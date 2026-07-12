@@ -62,6 +62,7 @@ from clerk.diff import DiffResult, diff_grids
 from clerk.digest import render_digest
 from clerk.fold import Observation, fold
 from clerk.grid import build_grid
+from clerk.listc import build_list_c, write_list_c
 from clerk.schemas import (
     AdjudicatedCondition,
     CellValid,
@@ -212,6 +213,10 @@ def run(
         out_dir / "adjudicated_condition.csv",
         _adjudicated_condition_rows(observations, events_by_id, cells))
     write_pi_payload(out_dir / "pi_payload.csv", _pi_payload_rows(cells))
+    # Enriched List C — the standalone compliance record (one row per
+    # resolved downtime episode; re-derived on every fold, single writer).
+    write_list_c(out_dir / "list_c.csv",
+                 build_list_c(events, capsules, cells, config.JitterToleranceMin))
 
     # Step 7 — diff + digest
     diff_result = diff_grids(prior_cells, cells, events, run_date,

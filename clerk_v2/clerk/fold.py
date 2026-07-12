@@ -97,6 +97,17 @@ class Observation:
     analyzers: List[str]
     latest_acted_at: datetime
     contributing_event_ids: List[str]
+    # Winner-pick (A/B disagreement resolution), read on replay exactly like
+    # the dismissal fields above. None until a WindowPick event folds in.
+    # pick_choice: "use-A" | "use-B" | "corrected"; pick_extent is the pick
+    # EVENT's own stated window (ledger-17 style — this event's extent,
+    # never the observation's current one); pick_approver is the Actor.
+    # These fields resolve the List C RECORD only — they never alter the
+    # observation's extent, so hourly validity math is untouched.
+    pick_choice: Optional[str] = None
+    pick_extent: Optional[Tuple[datetime, datetime]] = None
+    pick_approver: Optional[str] = None
+    pick_acted_at: Optional[datetime] = None
 
 
 def _origin_id(e: Event) -> str:
@@ -126,6 +137,7 @@ def _replay(ordered: List[Event]) -> Observation:
     has_corrective_action = False
     latest_acted_at = ordered[0].ActedAt
     contributing: List[str] = []
+    pick_choice = pick_extent = pick_approver = pick_acted_at = None
 
     for e in ordered:
         contributing.append(e.EventID)
@@ -163,6 +175,17 @@ def _replay(ordered: List[Event]) -> Observation:
             extent_start, extent_end = e.ExtentStartUTC, e.ExtentEndUTC
             # status unchanged; folded without judgment — no reductive-edit
             # gating here (diff.py, Step 7, owns that check).
+        elif e.EventType is EventType.WindowPick:
+            # Winner-pick (synthetic approval stand-in): record the choice,
+            # this event's own stated window, and the approver. Status and
+            # the observation's extent are UNCHANGED — the pick resolves
+            # the List C record, not the hourly validity union. Last pick
+            # wins on replay, like every other effect here.
+            pick_choice = e.Category or None
+            pick_extent = ((e.ExtentStartUTC, e.ExtentEndUTC)
+                           if e.ExtentStartUTC and e.ExtentEndUTC else None)
+            pick_approver = e.Actor
+            pick_acted_at = e.ActedAt
         else:
             raise AssertionError(f"unhandled EventType in fold: {e.EventType}")
 
@@ -177,4 +200,8 @@ def _replay(ordered: List[Event]) -> Observation:
         analyzers=list(origin.AnalyzerCEMIDs),
         latest_acted_at=latest_acted_at,
         contributing_event_ids=contributing,
+        pick_choice=pick_choice,
+        pick_extent=pick_extent,
+        pick_approver=pick_approver,
+        pick_acted_at=pick_acted_at,
     )

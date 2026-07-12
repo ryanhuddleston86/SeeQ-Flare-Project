@@ -32,6 +32,18 @@ class EventType(str, Enum):
     BoundaryUpdate     = "BoundaryUpdate"
     Withdrawn          = "Withdrawn"
     Superseded         = "Superseded"
+    # Winner-pick: resolves an A/B window disagreement on a downtime record.
+    # SYNTHETIC INPUT ONLY for now — these events stand in for the
+    # not-yet-built approval step (no UI/workflow exists); they are read by
+    # the fold exactly the way dismissal events are. TargetEventID = the
+    # List A (TechEntry) origin event; Actor = approver name; Category
+    # carries the choice: "use-A" | "use-B" | "corrected" (corrected picks
+    # carry the corrected window in this event's own Extent columns).
+    WindowPick         = "WindowPick"
+
+
+# The three choice tokens a WindowPick event may carry in Category.
+WINDOW_PICK_CHOICES = frozenset({"use-A", "use-B", "corrected"})
 
 
 # DetectionClass is an OPAQUE matching key, not an enum: the delta writer matches
@@ -77,6 +89,9 @@ class Event:
     ExtentStartUTC: Optional[datetime]
     ExtentEndUTC: Optional[datetime]
     AnalyzerCEMIDs: List[str]       # split from semicolon-delimited CSV field
+    # Category: unused on most event types (do not repurpose casually) —
+    # EXCEPT WindowPick, where it carries the pick choice (use-A/use-B/
+    # corrected; see EventType.WindowPick).
     Category: str
     ReasonCode: str                 # blank on DismissalProposed / Approval by design
     Actor: str
