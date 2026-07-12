@@ -148,7 +148,9 @@ def _latest_nonblank(obs_list: List[Observation], events_by_id: Dict[str, Event]
     for obs in obs_list:
         for eid in obs.contributing_event_ids:
             e = events_by_id.get(eid)
-            if e is None:
+            if e is None or e.EventType is EventType.WindowPick:
+                # pick events carry approval metadata, never the record's
+                # reason/note/corrective-action content
                 continue
             value = getattr(e, attr, "") or ""
             if value.strip() and (best_at is None or e.ActedAt >= best_at):

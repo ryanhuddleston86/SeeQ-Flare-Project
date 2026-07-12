@@ -25,3 +25,9 @@ S9,B14,SeeqDetection,NOx-P,2026-04-01T10:00:00+00:00,2026-04-01T14:00:00+00:00,,
 S9,B14-CF,Confirmation,NOx-P,2026-04-01T10:00:00+00:00,2026-04-01T14:00:00+00:00,MM-01,
 S9,B15,SeeqDetection,NOx-T,2026-04-01T12:00:00+00:00,2026-04-01T16:00:00+00:00,,
 S9,B15-CF,Confirmation,NOx-T,2026-04-01T12:00:00+00:00,2026-04-01T16:00:00+00:00,MM-01,
+S10a,A16,TechEntry,NOX-01,2026-04-01T08:00:00+00:00,2026-04-01T10:00:00+00:00,MM-01,Blown fuse on sample pump
+S10b,A17,TechEntry,NOX-01,2026-04-01T08:00:00+00:00,2026-04-01T10:00:00+00:00,MM-01,Analyzer down 8-10 (tech estimate)
+S10c,A17,TechEntry,NOX-01,2026-04-01T08:00:00+00:00,2026-04-01T10:00:00+00:00,MM-01,Analyzer down 8-10 (tech estimate)
+S10c,A17-PICK,WindowPick,NOX-01,,,,synthetic approval stand-in
+S10d,A17,TechEntry,NOX-01,2026-04-01T08:00:00+00:00,2026-04-01T10:00:00+00:00,MM-01,Analyzer down 8-10 (tech estimate)
+S10d,A17-PICK,WindowPick,NOX-01,,,,synthetic approval stand-in
