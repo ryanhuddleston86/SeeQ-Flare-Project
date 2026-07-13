@@ -52,7 +52,10 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from clerk.fold import ORIGIN_TYPES, Observation, Status, fold
-from clerk.grid import capsule_provenance_id
+from clerk.grid import OOC_RULE, capsule_provenance_id
+
+# SourceUsed label for an OOC (Appendix F §4.3.1) List C record.
+OOC_SOURCE = "OOC (App F 4.3.1)"
 from clerk.rules import merge_intervals
 from clerk.schemas import (AnalyzerUnit, Capsule, CellValid, Event, EventType,
                            GridCell)
@@ -169,6 +172,40 @@ def _contiguous_hours(hours: List[datetime]) -> List[Interval]:
             out[-1] = (out[-1][0], h + timedelta(hours=1))
         else:
             out.append((h, h + timedelta(hours=1)))
+    return out
+
+
+def _ooc_records(cells_by_analyzer: Dict[str, List[GridCell]]) -> List[ListCRecord]:
+    """OOC (Appendix F §4.3.1) List C records. OOC-invalid hours carry no
+    event or capsule of their own (they come from the validation stream), so
+    without this the standalone record would show a clean analyzer while the
+    grid shows it OOC-invalid. One record per contiguous run of OOC-invalid
+    hours per analyzer, under the OOC (QA/QC) paragraph. Boundary hours that
+    resolved VALID under OOC are not downtime and get no record."""
+    out: List[ListCRecord] = []
+    for analyzer, cells in cells_by_analyzer.items():
+        ooc_down = sorted(c.HourStartUTC for c in cells
+                          if c.Valid is CellValid.invalid and c.RuleApplied == OOC_RULE)
+        if not ooc_down:
+            continue
+        for window in _contiguous_hours(ooc_down):
+            hrs = [h for h in ooc_down if window[0] <= h < window[1]]
+            out.append(ListCRecord(
+                Analyzer=analyzer, State="auto-approved",
+                ResolvedWindows=[window],
+                ResolvedMinutes=(window[1] - window[0]).total_seconds() / 60.0,
+                SourceUsed=OOC_SOURCE, Disagreement="",
+                WindowA=[], WindowsB=[],
+                ReasonCode="QA-01",
+                Note="Out-of-control (Appendix F 4.3.1) — validation-driven "
+                     "invalidation; whole window invalid end-to-end",
+                CorrectiveAction="",
+                ApproverName="auto", ApproverDecision="ooc",
+                ApprovedAtUTC=None,
+                GoverningParagraphs=[OOC_RULE],
+                DownHours=hrs,
+                ContributingRecords=[f"OOC:{analyzer}"],
+            ))
     return out
 
 
@@ -348,6 +385,11 @@ def build_list_c(
                 GoverningParagraphs=paragraphs, DownHours=down_hours,
                 ContributingRecords=provenance,
             ))
+    # OOC (App F §4.3.1) records — emitted BEFORE the propagated pass so their
+    # hours count as "covered" and detected-propagation does not double-book
+    # an OOC-caused invalid hour.
+    records.extend(_ooc_records(cells_by_analyzer))
+
     # v3 Gap #2: add records for diluent-propagated downtime on dependents.
     if analyzer_units:
         records.extend(_propagated_records(

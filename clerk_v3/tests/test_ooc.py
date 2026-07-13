@@ -110,26 +110,29 @@ def test_exit_is_the_next_pass_interior_spans_end_to_end():
 # Flagged edge cases — surfaced, not invented
 # ---------------------------------------------------------------------------
 
-def test_flag_4x_on_first_validation_no_preceding_capsule():
-    """(1) a 4x with no preceding capsule: entrance undefined -> no window,
-    a flag is emitted (behavior NOT invented)."""
-    caps = [_cap("A1", _t(2), _t(2, 15), FAIL_4X),
+def test_4x_on_first_validation_enters_at_record_start():
+    """(1) DEFINED (confirmed): a 4x with no preceding capsule enters at the
+    BEGINNING OF THE RECORD (this first capsule's start), forward to the
+    closing Pass — no flag, no undefined entrance."""
+    caps = [_cap("A1", _t(2), _t(2, 15), FAIL_4X),   # first validation is a 4x
             _cap("A1", _t(6), _t(6, 15), PASS)]
     windows, flags = compute_ooc_windows(caps)
-    assert windows == {}, "no entrance guessed"
-    assert len(flags) == 1 and flags[0].kind == "4x-no-preceding-capsule"
+    assert windows == {"A1": [(_t(2), _t(6, 15))]}, \
+        "entrance at the record's first capsule start, exit at the Pass end"
+    assert flags == [], "no longer an unresolved edge case"
 
 
-def test_flag_open_tail_conservatively_closed_when_end_supplied():
-    """(2) a window open at end of stream: with open_tail_end it is closed
-    conservatively there AND flagged; without it, no window but still flagged."""
+def test_open_tail_stays_invalid_until_a_pass_closed_at_window_end():
+    """(2) DEFINED (confirmed): a window open at end of stream STAYS open
+    (invalid). open_tail_end closes it there so the grid can score it — the
+    permanent rule. An informational flag records that no Pass closed it."""
     caps = [_cap("A1", _t(1), _t(1, 15), PASS),
             _cap("A1", _t(2), _t(2, 15), FAIL_4X)]     # opens, never closes
-    w_open, f_open = compute_ooc_windows(caps)          # no open_tail_end
-    assert w_open == {} and any(f.kind == "open-tail-no-closing-pass" for f in f_open)
     w_closed, f_closed = compute_ooc_windows(caps, open_tail_end=_t(12))
-    assert w_closed == {"A1": [(_t(1), _t(12))]}, "conservatively closed at open_tail_end"
-    assert any(f.kind == "open-tail-no-closing-pass" for f in f_closed)
+    assert w_closed == {"A1": [(_t(1), _t(12))]}, \
+        "held open (invalid) through the evaluation window end"
+    assert any(f.kind == "open-tail-no-closing-pass" for f in f_closed), \
+        "informational flag: still open, no corrective Pass yet"
 
 
 # ---------------------------------------------------------------------------
@@ -250,3 +253,74 @@ def test_no_ooc_windows_is_a_no_op():
     base = _grid({})
     assert all(c.RuleApplied != OOC_RULE for c in base)
     assert all(c.Valid is CellValid.valid for c in base), "clean operating hours"
+
+
+# ---------------------------------------------------------------------------
+# #1 (confirmed) — 4x on the first validation invalidates from the record start
+# ---------------------------------------------------------------------------
+
+def test_grid_4x_on_first_validation_invalid_from_record_start():
+    """A 4x on the very first validation (first capsule 02:00, Pass 05:00)
+    -> OOC window [02:00, 05:15]. Grid: hours 02,03,04 wholesale invalid
+    under OOC from the record start; hour 05 is the exit boundary."""
+    caps = [_cap("A1", _t(2), _t(2, 15), FAIL_4X),
+            _cap("A1", _t(5), _t(5, 15), PASS)]
+    windows, flags = compute_ooc_windows(caps)
+    assert flags == [] and windows == {"A1": [(_t(2), _t(5, 15))]}
+    cells = _grid(windows)
+    for h in (2, 3, 4):
+        v, rule = _verdict(cells, "A1", _t(h))
+        assert (v, rule) == (CellValid.invalid, OOC_RULE), \
+            f"hour {h} invalid from the record start"
+    assert _verdict(cells, "A1", _t(1))[0] is CellValid.valid, "before the record: valid"
+    assert _verdict(cells, "A1", _t(5)) == (CellValid.valid, OOC_RULE)
+
+
+# ---------------------------------------------------------------------------
+# #3 (confirmed) — OOC produces a List C record that matches the grid
+# ---------------------------------------------------------------------------
+
+def test_list_c_has_ooc_record_matching_the_grid():
+    from clerk.listc import OOC_SOURCE, build_list_c
+    units = [AnalyzerUnit("A1", "U1", SeeqCovered=True, Obligation="NOx")]
+    windows = {"A1": [(_t(1), _t(4))]}
+    cells = _grid(windows, units=units)
+    records = build_list_c([], [], cells, analyzer_units=units)
+    ooc = [r for r in records if r.SourceUsed == OOC_SOURCE]
+    assert len(ooc) == 1
+    r = ooc[0]
+    assert r.DownHours == [_t(1), _t(2), _t(3)]
+    assert r.ResolvedWindows == [(_t(1), _t(4))]
+    assert r.GoverningParagraphs == [OOC_RULE]
+    assert r.ContributingRecords == ["OOC:A1"]
+    grid_ooc = {c.HourStartUTC for c in cells
+                if c.Valid is CellValid.invalid and c.RuleApplied == OOC_RULE}
+    covered = {h for rec in records for h in rec.DownHours}
+    assert grid_ooc <= covered, "no OOC-down grid hour missing from List C"
+
+
+def test_list_c_ooc_boundary_valid_hour_gets_no_record():
+    from clerk.listc import OOC_SOURCE, build_list_c
+    units = [AnalyzerUnit("A1", "U1", SeeqCovered=True, Obligation="NOx")]
+    windows = {"A1": [(_t(1, 40), _t(4))]}
+    cells = _grid(windows, units=units)
+    records = build_list_c([], [], cells, analyzer_units=units)
+    ooc = [r for r in records if r.SourceUsed == OOC_SOURCE]
+    assert all(_t(1) not in r.DownHours for r in ooc)
+    assert ooc and ooc[0].DownHours == [_t(2), _t(3)]
+
+
+def test_list_c_ooc_propagates_to_dependent_records():
+    from clerk.listc import OOC_SOURCE, build_list_c
+    units = [
+        AnalyzerUnit("O2", "B15", SeeqCovered=True, Obligation="O2",
+                     DiluentsRole="diluent", DiluentSpecies="O2"),
+        AnalyzerUnit("NOx", "B15", SeeqCovered=True, Obligation="NOx",
+                     DiluentsRole="diluent-corrected", DiluentSpecies="O2",
+                     DiluentBasis="O2"),
+    ]
+    cells = _grid({"O2": [(_t(1), _t(3))]}, units=units)
+    records = build_list_c([], [], cells, analyzer_units=units)
+    for a in ("O2", "NOx"):
+        recs = [r for r in records if r.Analyzer == a and r.SourceUsed == OOC_SOURCE]
+        assert recs and recs[0].DownHours == [_t(1), _t(2)]

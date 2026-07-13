@@ -21,14 +21,17 @@ Entrance (asymmetric by level):
 Exit (both): the window ends at the END of the next Pass capsule after
 corrective action.
 
-Flagged edge cases (NOT invented — surfaced for confirmation):
+Two former edge cases, now DEFINED behavior (Ryan confirmed):
   (1) a 4x_Fail with no preceding capsule (4x on the very first validation):
-      the entrance is undefined; no window is opened, an OOCFlag is emitted.
-  (2) a window still open at the end of the stream (no closing Pass): its
-      end is undefined. If `open_tail_end` is supplied the window is closed
-      there CONSERVATIVELY (OOC until proven back in control) and an OOCFlag
-      is emitted; if not supplied, no window is emitted and the flag still
-      fires. Either way the caller is told.
+      the OOC entrance is the BEGINNING OF THE RECORD (the start of the
+      first capsule for that analyzer), forward to the closing Pass.
+  (2) a window still open at the end of the stream (no closing Pass): it
+      STAYS open (invalid) until a closing Pass arrives. `open_tail_end`
+      (typically the evaluation window's end) closes the still-open window
+      there so the grid can score it — this is the permanent rule, not a
+      provisional auto-close. An informational OOCFlag records that the
+      window is still open (no corrective Pass yet), but it is not a
+      "don't know what to do" flag.
 """
 from __future__ import annotations
 
@@ -100,12 +103,11 @@ def compute_ooc_windows(
                         consec_2x = 0
                 elif cap.Status == FAIL_4X:
                     if i == 0:
-                        # (1) no preceding capsule — do NOT guess the entrance.
-                        flags.append(OOCFlag(
-                            analyzer, "4x-no-preceding-capsule",
-                            f"4x_Fail at {cap.StartUTC.isoformat()} is the first "
-                            f"validation for this analyzer; entrance (start of the "
-                            f"preceding capsule) is undefined — no window opened."))
+                        # (1) DEFINED (Ryan confirmed): 4x on the very first
+                        # validation — no preceding capsule — enters at the
+                        # BEGINNING OF THE RECORD (this first capsule's start),
+                        # forward to the closing Pass.
+                        entrance = cap.StartUTC
                     else:
                         entrance = caps[i - 1].StartUTC   # start of the preceding
                     # a 4x does not increment the 2x count
@@ -118,16 +120,19 @@ def compute_ooc_windows(
                 # fails while OOC: stay OOC, no new entrance
 
         if entrance is not None:
-            # (2) open tail — no closing Pass in the stream.
+            # (2) DEFINED (Ryan confirmed): the window STAYS open (invalid)
+            # until a closing Pass. open_tail_end closes the still-open window
+            # so the grid can score it (permanent rule, not an auto-close).
             if open_tail_end is not None and open_tail_end > entrance:
                 out.append((entrance, open_tail_end))
-                tail = f"closed CONSERVATIVELY at {open_tail_end.isoformat()}"
+                tail = f"held open (invalid) through {open_tail_end.isoformat()}"
             else:
-                tail = "no window emitted (open_tail_end not supplied)"
+                tail = ("no open_tail_end supplied, so no closing bound is applied "
+                        "this run — pass the evaluation window end to score it")
             flags.append(OOCFlag(
                 analyzer, "open-tail-no-closing-pass",
                 f"OOC window opened at {entrance.isoformat()} has no closing Pass "
-                f"in the stream; {tail}."))
+                f"yet; {tail}."))
 
         if out:
             windows[analyzer] = out
