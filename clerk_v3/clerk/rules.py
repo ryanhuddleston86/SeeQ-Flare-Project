@@ -71,6 +71,9 @@ class HourContext:
     # _select_paragraph falls through to the auto-selection chain.
     # FLAG: provisional — mapping table not yet confirmed by Ryan.
     resolved_paragraph: Optional[str] = None
+    # Item 2: MQAQC — a validation/calibration ran in this hour. Caps the
+    # partial-operating-hour quadrant requirement at 2 (see _branch_normal).
+    mqaqc: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +126,34 @@ def quadrants_operated(ctx: HourContext) -> Set[int]:
         if intervals_overlap(ctx.operating, q_start, q_start + _FIFTEEN_MIN):
             out.add(q)
     return out
+
+
+def _quadrants_with(hour_start: datetime, intervals: List[Interval]) -> Set[int]:
+    """Which quadrants (0–3) contain any of the given time."""
+    out: Set[int] = set()
+    for q in range(4):
+        q_start = hour_start + timedelta(minutes=15 * q)
+        if intervals_overlap(intervals, q_start, q_start + _FIFTEEN_MIN):
+            out.add(q)
+    return out
+
+
+def quadrant_validity(hour_start: datetime, operating: List[Interval],
+                      valid: List[Interval], mqaqc: bool) -> bool:
+    """Item 2 — the partial-operating quadrant rule (also the OOC MQAQC-cap
+    boundary rule). Validity requires one valid data point in EVERY quadrant
+    the unit actually operated in — capped at 2 when the hour is an MQAQC
+    hour (a validation/calibration ran in it), regardless of quadrants
+    operated. Returns False when nothing was operated (the caller decides
+    what an all-offline hour means)."""
+    operated = _quadrants_with(hour_start, operating)
+    if not operated:
+        return False
+    valid_q = _quadrants_with(hour_start, valid)
+    required = len(operated)
+    if mqaqc:
+        required = min(required, 2)
+    return len(valid_q) >= required
 
 
 def _valid_time(ctx: HourContext, after: Optional[datetime] = None) -> List[Interval]:
@@ -227,11 +258,18 @@ def _branch_normal(ctx: HourContext) -> Tuple[CellValid, str]:
     # "full operating hour (any clock hour with 60 minutes of unit operation)"
     operated = sum((e - s for s, e in merge_intervals(ctx.operating)), timedelta(0))
     full_hour = operated >= timedelta(minutes=60)
-    for q in quads:
-        q_start = ctx.hour_start + timedelta(minutes=15 * q)
-        if not intervals_overlap(valid, q_start, q_start + _FIFTEEN_MIN):
-            return CellValid.invalid, "(i)" if full_hour else "(ii)"
-    return CellValid.valid, "(i)" if full_hour else "(ii)"
+    if full_hour:
+        # (i): one valid data point in each of the four quadrants.
+        for q in quads:
+            q_start = ctx.hour_start + timedelta(minutes=15 * q)
+            if not intervals_overlap(valid, q_start, q_start + _FIFTEEN_MIN):
+                return CellValid.invalid, "(i)"
+        return CellValid.valid, "(i)"
+    # (ii) PARTIAL operating hour — Item 2: one valid point in every operated
+    # quadrant, capped at 2 on an MQAQC hour. This replaces the plain
+    # "2 points >=15 min apart" for partial-operating hours.
+    ok = quadrant_validity(ctx.hour_start, ctx.operating, valid, ctx.mqaqc)
+    return (CellValid.valid if ok else CellValid.invalid), "(ii)"
 
 
 # ---------------------------------------------------------------------------
@@ -320,6 +358,14 @@ def _select_paragraph(ctx: HourContext):
         return _branch_iv
     if len(quadrants_operated(ctx)) == 1:
         return _branch_iii_b
+    operated = sum((e - s for s, e in merge_intervals(ctx.operating)), timedelta(0))
+    partial = operated < timedelta(minutes=60)
+    # Item 2: a PARTIAL-operating hour uses the per-quadrant rule (_branch_normal),
+    # NOT the full-hour "2 points >=15 min" (iii)(A) span — even when a QA/
+    # maintenance activity ran in it (the MQAQC cap is applied inside
+    # _branch_normal). Partial QA hours are coverage-independent, like (iii).
+    if partial and (ctx.mqaqc or ctx.manual_qa_windows or ctx.seeq_covered):
+        return _branch_normal
     # Coverage-independent: manual/QA evidence never required Seeq detection.
     if ctx.manual_qa_windows:
         return _branch_iii_a

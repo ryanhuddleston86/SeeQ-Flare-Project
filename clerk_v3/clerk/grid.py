@@ -86,6 +86,7 @@ from clerk.rules import (
     interval_span,
     intervals_overlap,
     merge_intervals,
+    quadrant_validity,
     subtract_intervals,
 )
 from clerk.schemas import (
@@ -334,18 +335,29 @@ OOC_RULE = "OOC"
 _FIFTEEN = timedelta(minutes=15)
 
 
-def _score_ooc_hour(operating_in_hour, ooc_in_hour, other_invalid_in_hour):
+def _score_ooc_hour(hour_start, operating_in_hour, ooc_in_hour,
+                    other_invalid_in_hour, mqaqc):
     """The whole-hour rule at an OOC boundary hour (and interior hours).
 
-    The OOC span is wholesale invalid — never quadrant-scored. The rest of
-    the hour (operating time OUTSIDE the OOC span, and outside any other
-    invalidity) is adjudicated on its own: if it holds two valid data points
-    at least 15 minutes apart (interval_span >= 15 min under dense sampling),
-    the hour is VALID; otherwise INVALID. An interior hour has no residual
-    valid time, so it falls out INVALID naturally.
+    The OOC span is wholesale invalid — never quadrant-scored. The residual
+    (operating time OUTSIDE the OOC span and other invalidity) is adjudicated
+    on its own. An interior hour has no residual -> INVALID naturally.
+
+    Item 3: the CLOSING hour that contains the passing validation is an MQAQC
+    hour. On an MQAQC hour the residual is scored by the quadrant rule with
+    the 2-cap (rules.quadrant_validity): one valid point per operated
+    quadrant, capped at 2 — so a late-completing pass that leaves valid data
+    in fewer than 2 quadrants keeps the closing hour DOWN, with validity
+    resuming the next hour. A non-MQAQC boundary keeps the plain
+    "two points >=15 min apart" span rule (unchanged).
     """
     residual = subtract_intervals(
         operating_in_hour, merge_intervals(list(ooc_in_hour) + list(other_invalid_in_hour)))
+    if not residual:
+        return CellValid.invalid
+    if mqaqc:
+        ok = quadrant_validity(hour_start, operating_in_hour, residual, mqaqc=True)
+        return CellValid.valid if ok else CellValid.invalid
     return CellValid.valid if interval_span(residual) >= _FIFTEEN else CellValid.invalid
 
 
@@ -407,20 +419,30 @@ def build_grid(
     window_end: datetime,
     validations: Optional[List[ValidationEvent]] = None,
     ooc_windows: Optional[Dict[str, List[Interval]]] = None,
+    unit_offline_windows: Optional[Dict[str, List[Interval]]] = None,
+    mqaqc_windows: Optional[Dict[str, List[Interval]]] = None,
 ) -> List[GridCell]:
     """Pure function: fixtures (already read) + an explicit [window_start,
-    window_end) hour-aligned UTC range -> the grid. Which range to evaluate
-    on a given run (LookbackMonths etc.) is run.py's orchestration concern
-    (Step 6), not this module's.
+    window_end) hour-aligned UTC range -> the grid.
 
-    ooc_windows (v3): {analyzer: [(start, end), ...]} of Out-Of-Control
-    windows from clerk.ooc.compute_ooc_windows (Appendix F §4.3.1). These are
-    scored by their OWN whole-hour QA rule (_score_ooc_hour), never the
-    quadrant scorer, and propagate to diluent dependents like any other
-    invalidity. Compute them (and handle the flagged edge cases) in the
-    caller; pass the resulting windows here."""
+    ooc_windows (v3): {analyzer: [(start, end)]} Out-Of-Control windows from
+    clerk.ooc.compute_ooc_windows (App F §4.3.1) — scored by their own rule,
+    never the quadrant scorer, and propagated to diluent dependents.
+
+    unit_offline_windows (Item 1): {unit: [(start, end)]} SeeQ unit-offline
+    capsules. Operating time is the operating windows MINUS these. An hour
+    the unit is offline for the ENTIRE clock hour is not-operating (excluded
+    from the operating-time denominator); any operating minute makes the hour
+    assessed and it counts.
+
+    mqaqc_windows (Item 2): {analyzer: [(start, end)]} windows in which a
+    validation/calibration ran. An hour overlapping one (or carrying a
+    manual/QA window) is an MQAQC hour — the partial-operating quadrant
+    requirement is capped at 2."""
     validations = validations or []
     ooc_windows = ooc_windows or {}
+    unit_offline_windows = unit_offline_windows or {}
+    mqaqc_windows = mqaqc_windows or {}
     observations = fold(events)
     origin_types = _origin_types(events)
 
@@ -459,6 +481,10 @@ def build_grid(
     reason_windows = _reason_paragraph_windows(observations, events_by_id, config)
 
     operating_by_unit = _operating_by_unit(operating_windows)
+    # Item 1: subtract SeeQ unit-offline capsules from operating time.
+    for unit, offline in unit_offline_windows.items():
+        operating_by_unit[unit] = subtract_intervals(
+            operating_by_unit.get(unit, []), offline)
     provenance = _provenance_index(observations, capsules)
 
     cells: List[GridCell] = []
@@ -499,6 +525,10 @@ def build_grid(
                     if v.Passed and failed_cal_at < v.ValidatedAtUTC < hour_end:
                         if passing_cal_at is None or v.ValidatedAtUTC < passing_cal_at:
                             passing_cal_at = v.ValidatedAtUTC
+            # Item 2: MQAQC — a validation/calibration ran in this hour (a
+            # validation-check window overlaps, or a manual/QA window exists).
+            mqaqc = bool(_clip(mqaqc_windows.get(au.Analyzer, []), hour, hour_end)) \
+                or bool(_clip(manual_windows.get(au.Analyzer, []), hour, hour_end))
             ctx = HourContext(
                 analyzer=au.Analyzer,
                 hour_start=hour,
@@ -510,16 +540,22 @@ def build_grid(
                 passing_cal_at=passing_cal_at,
                 resolved_paragraph=_resolve_hour_paragraph(
                     reason_windows.get(au.Analyzer, []), hour, hour_end),
+                mqaqc=mqaqc,
             )
             # OOC takes its OWN path when the hour is operating and touched by
-            # an OOC window: wholesale-invalid interior, whole-hour QA rule at
-            # the boundary. It NEVER goes through the quadrant scorer, and the
-            # governing paragraph is OOC (validation-driven QA/QC), not fault.
+            # an OOC window: wholesale-invalid interior, whole-hour rule at the
+            # boundary (MQAQC-cap on the closing hour). It NEVER goes through
+            # the quadrant scorer; the paragraph is OOC (QA/QC), not fault.
+            # Item 3: when the unit is offline for the WHOLE hour (ctx.operating
+            # empty) inside an OOC window, the offline masks OOC and the hour
+            # is not-operating (via evaluate_hour) — excluded from the
+            # denominator — while the OOC window itself still closes only at
+            # the passing validation (handled in clerk.ooc, not here).
             ooc_in_hour = _clip(effective_ooc.get(au.Analyzer, []), hour, hour_end)
             if ooc_in_hour and ctx.operating:
                 valid = _score_ooc_hour(
-                    ctx.operating, ooc_in_hour,
-                    ctx.manual_qa_windows + ctx.detected_invalid_windows)
+                    hour, ctx.operating, ooc_in_hour,
+                    ctx.manual_qa_windows + ctx.detected_invalid_windows, mqaqc)
                 rule_applied = OOC_RULE
             else:
                 valid, rule_applied = evaluate_hour(ctx)
@@ -540,6 +576,47 @@ def build_grid(
 # ---------------------------------------------------------------------------
 # W7 — down-hour predicate
 # ---------------------------------------------------------------------------
+
+# Item 1: the DetectionClass that marks a SeeQ UNIT-offline capsule (distinct
+# from an analyzer-offline / status-offline detection). Unit-offline capsules
+# reduce operating time; they are NOT analyzer-invalidity detections.
+UNIT_OFFLINE_CLASS = "unit-offline"
+
+
+def unit_offline_windows_from_capsules(
+    capsules: List[Capsule],
+    analyzer_units: List[AnalyzerUnit],
+) -> Dict[str, List[Interval]]:
+    """Item 1: pull SeeQ unit-offline capsules (DetectionClass 'unit-offline')
+    out of the capsule stream and key them by UNIT. A unit-offline capsule is
+    named by an analyzer; it applies to that analyzer's whole unit."""
+    unit_of = {au.Analyzer: au.Unit for au in analyzer_units}
+    out: Dict[str, List[Interval]] = {}
+    for c in capsules:
+        if c.DetectionClass == UNIT_OFFLINE_CLASS:
+            unit = unit_of.get(c.Analyzer, c.Analyzer)
+            out.setdefault(unit, []).append((c.CapsuleStartUTC, c.CapsuleEndUTC))
+    return out
+
+
+def detection_capsules(capsules: List[Capsule]) -> List[Capsule]:
+    """The analyzer-invalidity detections — everything EXCEPT unit-offline."""
+    return [c for c in capsules if c.DetectionClass != UNIT_OFFLINE_CLASS]
+
+
+def operating_time_denominator(cells: List[GridCell]) -> Dict[str, int]:
+    """Item 1: the operating-time denominator per analyzer = calendar hours in
+    the grid MINUS full not-operating (unit fully offline) hours. An hour with
+    even one operating minute is 'assessed' and counts; a fully-offline hour is
+    'not-assessed' and is excluded."""
+    out: Dict[str, int] = {}
+    for c in cells:
+        if c.Valid is not CellValid.not_operating:
+            out[c.Analyzer] = out.get(c.Analyzer, 0) + 1
+        else:
+            out.setdefault(c.Analyzer, 0)
+    return out
+
 
 def is_down_hour(cell: GridCell) -> bool:
     """Return True only when the cell represents a compliance down-hour.

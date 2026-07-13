@@ -42,7 +42,9 @@ sys.path.insert(0, str(_HERE))
 
 from clerk.adapters import (is_failed_validation,                            # noqa: E402
                             read_events_sharepoint)
-from clerk.grid import build_grid                                            # noqa: E402
+from clerk.dar import dar_rollup, write_dar                                  # noqa: E402
+from clerk.grid import (build_grid, detection_capsules,                      # noqa: E402
+                        unit_offline_windows_from_capsules)
 from clerk.listc import build_list_c, write_list_c                           # noqa: E402
 from clerk.ooc import ValidationCapsule, compute_ooc_windows                 # noqa: E402
 from clerk.schemas import (Capsule, OperatingWindow, SiteConfig,             # noqa: E402
@@ -99,16 +101,21 @@ def _read_validations(path):
     return out
 
 
-def run(events_path, roster_path, out_dir, list_b_path=None, validations_path=None):
+def run(events_path, roster_path, out_dir, list_b_path=None, validations_path=None,
+        reporting_start=None, reporting_end=None):
     analyzer_units = read_analyzer_units(roster_path)
     events = read_events_sharepoint(events_path)
-    capsules = _read_capsules(list_b_path) if list_b_path and Path(list_b_path).exists() else []
+    all_capsules = _read_capsules(list_b_path) if list_b_path and Path(list_b_path).exists() else []
     val_caps = (_read_validations(validations_path)
                 if validations_path and Path(validations_path).exists() else [])
 
+    # Item 1: split SeeQ unit-offline capsules out of the detection stream.
+    unit_offline = unit_offline_windows_from_capsules(all_capsules, analyzer_units)
+    capsules = detection_capsules(all_capsules)
+
     known = {au.Analyzer for au in analyzer_units}
     referenced = ({a for e in events for a in e.AnalyzerCEMIDs}
-                  | {c.Analyzer for c in capsules}
+                  | {c.Analyzer for c in all_capsules}
                   | {v.Analyzer for v in val_caps})
     unknown = sorted(referenced - known)
     if unknown:
@@ -117,7 +124,7 @@ def run(events_path, roster_path, out_dir, list_b_path=None, validations_path=No
                          f"'Unit - Pollutant' identity the inputs use)")
 
     stamps = [t for e in events for t in (e.ExtentStartUTC, e.ExtentEndUTC) if t]
-    stamps += [t for c in capsules for t in (c.CapsuleStartUTC, c.CapsuleEndUTC)]
+    stamps += [t for c in all_capsules for t in (c.CapsuleStartUTC, c.CapsuleEndUTC)]
     stamps += [t for v in val_caps for t in (v.StartUTC, v.EndUTC) if t]
     if not stamps:
         raise SystemExit("No timestamps found in any input — nothing to run.")
@@ -126,24 +133,37 @@ def run(events_path, roster_path, out_dir, list_b_path=None, validations_path=No
     if end < max(stamps):
         end += timedelta(hours=1)
 
-    # OOC (App F 4.3.1) from the validation stream. Open tails are held
-    # invalid through the evaluation window end (the permanent rule).
+    # Item 4: fold the WHOLE window; the DAR reports on [reporting_start,
+    # reporting_end). Default the reporting period to the full window.
+    reporting_start = reporting_start or start
+    reporting_end = reporting_end or end
+
+    # OOC (App F 4.3.1) from the validation stream. Open tails held invalid
+    # through the evaluation window end (the permanent rule).
     ooc_windows, ooc_flags = compute_ooc_windows(val_caps, open_tail_end=end)
+    # Item 2: MQAQC windows = each validation-check window (per analyzer).
+    mqaqc_windows = {}
+    for v in val_caps:
+        mqaqc_windows.setdefault(v.Analyzer, []).append((v.StartUTC, v.EndUTC))
 
     operating = [OperatingWindow(u, start, end)
                  for u in sorted({au.Unit for au in analyzer_units})]
     cells = build_grid(events, capsules, operating, analyzer_units, [], CONFIG,
-                       start, end, ooc_windows=ooc_windows)
+                       start, end, ooc_windows=ooc_windows,
+                       unit_offline_windows=unit_offline, mqaqc_windows=mqaqc_windows)
     records = build_list_c(events, capsules, cells, CONFIG.JitterToleranceMin,
                            analyzer_units=analyzer_units)
+    dar = dar_rollup(cells, records, analyzer_units, reporting_start, reporting_end)
 
     out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
     write_grid(out_dir / "list_c_hours.csv", cells)
     write_list_c(out_dir / "list_c.csv", records)
+    write_dar(out_dir / "dar_summary.csv", dar)
 
     failed_val = [e.EventID for e in events if is_failed_validation(e.Reason)]
     multi = [e.EventID for e in events if len(e.AnalyzerCEMIDs) > 1]
     print(f"Inputs: {len(events)} events, {len(capsules)} detections, "
+          f"{len(unit_offline)} unit(s) with offline capsules, "
           f"{len(val_caps)} validation capsules ({len(referenced)} analyzers)")
     print(f"  multi-analyzer events split for the fold: {multi or 'none'}")
     print(f"  failed-validation Reason entries flagged: {failed_val or 'none'}")
@@ -151,10 +171,16 @@ def run(events_path, roster_path, out_dir, list_b_path=None, validations_path=No
           f"{ {a: len(w) for a, w in ooc_windows.items()} or 'none'}")
     for fl in ooc_flags:
         print(f"  OOC note [{fl.Analyzer}] {fl.kind}: {fl.detail}")
-    print(f"Window: {start.isoformat()} .. {end.isoformat()} "
+    print(f"Fold window: {start.isoformat()} .. {end.isoformat()} "
           f"({int((end-start).total_seconds()//3600)}h)")
-    print(f"Wrote {out_dir/'list_c_hours.csv'} ({len(cells)} rows) and "
-          f"{out_dir/'list_c.csv'} ({len(records)} records)")
+    print(f"Reporting period: {reporting_start.isoformat()} .. {reporting_end.isoformat()}")
+    for row in dar:
+        print(f"  DAR {row.Analyzer} [{row.Obligation}]: op={row.OperatingHours}h "
+              f"down={row.DowntimeHours}h ({row.DowntimePct}%) "
+              f"{'>=5% DOWNTIME' if row.Flag5pctDowntime else ''} -> {row.ReportRequired}")
+    print(f"Wrote {out_dir/'list_c_hours.csv'} ({len(cells)} rows), "
+          f"{out_dir/'list_c.csv'} ({len(records)} records), "
+          f"{out_dir/'dar_summary.csv'} ({len(dar)} rows)")
     return records, cells
 
 
@@ -173,10 +199,13 @@ def main(argv):
     # Optional inputs: explicit 4th/5th args, else auto-detected by name.
     list_b = argv[4] if len(argv) > 4 else _sibling(ev, "list_b.csv")
     validations = argv[5] if len(argv) > 5 else _sibling(ev, "validations.csv")
+    # Item 4: optional reporting-period bounds (ISO-8601 or MM/DD/YYYY).
+    rep_start = _parse_ts(argv[6]) if len(argv) > 6 else None
+    rep_end = _parse_ts(argv[7]) if len(argv) > 7 else None
     for p in (ev, roster):
         if not Path(p).exists():
             raise SystemExit(f"Missing input file: {p}")
-    run(ev, roster, out, list_b, validations)
+    run(ev, roster, out, list_b, validations, rep_start, rep_end)
     return 0
 
 
