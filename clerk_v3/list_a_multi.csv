@@ -1,0 +1,8 @@
+Scenario,EventID,Type,TargetEventID,Analyzer,StartUTC,EndUTC,ReasonCode,Category,Actor,ActedAtUTC,Note,CorrectiveAction,DetectionClass
+M1,MA1,TechEntry,,SRU-O2,2026-04-01T09:00:00+00:00,2026-04-01T11:00:00+00:00,MM-01,A - Monitor Equipment Malfunction,tech,2026-04-01T11:05:00+00:00,O2 analyzer drift alarm after vent line blockage,Blew out the vent header and recalibrated O2. Ran a validation - passed,
+M2,MA2,TechEntry,,B15-O2,2026-04-01T09:00:00+00:00,2026-04-01T11:00:00+00:00,MM-01,A - Monitor Equipment Malfunction,tech,2026-04-01T11:10:00+00:00,Boiler 15 O2 chiller failed,Replaced chiller and calibrated all components. Put back in service,
+M3,MA3,TechEntry,,B15-NOx,2026-04-01T06:00:00+00:00,2026-04-01T08:00:00+00:00,MM-01,A - Monitor Equipment Malfunction,tech,2026-04-01T08:05:00+00:00,NOx analyzer plugged sample filter,Changed sample filter and touched up calibration,
+M4,MA4,TechEntry,,SRU-O2,2026-04-01T13:00:00+00:00,2026-04-01T15:00:00+00:00,MM-01,A - Monitor Equipment Malfunction,tech,2026-04-01T15:10:00+00:00,O2 down - maintenance drift on O2. Logged by tech; no auto detection,Calibrated and reran validation,
+M5,MA5,TechEntry,,B15-NOx,2026-04-01T09:00:00+00:00,2026-04-01T10:00:00+00:00,QA-01,C - Quality Assurance Calibration,tech,2026-04-01T10:00:00+00:00,Quarterly CGA on Boiler 15 NOx,CGA passed,
+M5,MA6,TechEntry,,B15-CO,2026-04-01T09:00:00+00:00,2026-04-01T10:00:00+00:00,QA-01,C - Quality Assurance Calibration,tech,2026-04-01T10:00:00+00:00,Quarterly CGA on Boiler 15 CO,CGA passed,
+M6,MA7,TechEntry,,SRU-SO2,2026-04-01T12:50:00+00:00,2026-04-01T13:10:00+00:00,,,tech,2026-04-01T13:10:00+00:00,Performed touch up calibration on SO2,Calibrated and put back in service,

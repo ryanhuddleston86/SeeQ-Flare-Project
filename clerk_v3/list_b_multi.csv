@@ -1,0 +1,4 @@
+Scenario,Analyzer,DetectionClass,CapsuleStartUTC,CapsuleEndUTC
+M1,SRU-O2,status-offline,2026-04-01T09:00:00+00:00,2026-04-01T11:00:00+00:00
+M2,B15-O2,status-offline,2026-04-01T09:00:00+00:00,2026-04-01T11:00:00+00:00
+M3,B15-NOx,status-offline,2026-04-01T06:00:00+00:00,2026-04-01T08:00:00+00:00

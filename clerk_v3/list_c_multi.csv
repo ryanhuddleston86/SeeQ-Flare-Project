@@ -1,0 +1,12 @@
+Scenario,Analyzer,Obligation,State,Resolved,Source used,Reason,Note,Approver,Down hours,Provenance
+M1,SRU-O2,O2,auto-approved,09:00-11:00,concurrence (A=B),MM-01,O2 analyzer drift alarm after vent line blockage,auto,09:00;10:00,CAP:SRU-O2:status-offline:2026-04-01T09:00:00+00:00:2026-04-01T11:00:00+00:00;MA1
+M1,SRU-SO2,SO2,auto-approved,09:00-11:00,diluent-propagated (from SRU-O2),MM-01,Invalid because diluent SRU-O2 was down: O2 analyzer drift alarm after vent line blockage,auto,09:00;10:00,DILUENT:SRU-O2;CAP:SRU-O2:status-offline:2026-04-01T09:00:00+00:00:2026-04-01T11:00:00+00:00;MA1
+M2,B15-CO,CO,auto-approved,09:00-11:00,diluent-propagated (from B15-O2),MM-01,Invalid because diluent B15-O2 was down: Boiler 15 O2 chiller failed,auto,09:00;10:00,DILUENT:B15-O2;CAP:B15-O2:status-offline:2026-04-01T09:00:00+00:00:2026-04-01T11:00:00+00:00;MA2
+M2,B15-NOx,NOx,auto-approved,09:00-11:00,diluent-propagated (from B15-O2),MM-01,Invalid because diluent B15-O2 was down: Boiler 15 O2 chiller failed,auto,09:00;10:00,DILUENT:B15-O2;CAP:B15-O2:status-offline:2026-04-01T09:00:00+00:00:2026-04-01T11:00:00+00:00;MA2
+M2,B15-O2,O2,auto-approved,09:00-11:00,concurrence (A=B),MM-01,Boiler 15 O2 chiller failed,auto,09:00;10:00,CAP:B15-O2:status-offline:2026-04-01T09:00:00+00:00:2026-04-01T11:00:00+00:00;MA2
+M3,B15-NOx,NOx,auto-approved,06:00-08:00,concurrence (A=B),MM-01,NOx analyzer plugged sample filter,auto,06:00;07:00,CAP:B15-NOx:status-offline:2026-04-01T06:00:00+00:00:2026-04-01T08:00:00+00:00;MA3
+M4,SRU-O2,O2,auto-approved,13:00-15:00,A only,MM-01,O2 down - maintenance drift on O2. Logged by tech; no auto detection,auto,13:00;14:00,MA4
+M4,SRU-SO2,SO2,auto-approved,13:00-15:00,diluent-propagated (from SRU-O2),MM-01,Invalid because diluent SRU-O2 was down: O2 down - maintenance drift on O2. Logged by tech; no auto detection,auto,13:00;14:00,DILUENT:SRU-O2;MA4
+M5,B15-CO,CO,auto-approved,09:00-10:00,A only,QA-01,Quarterly CGA on Boiler 15 CO,auto,09:00,MA6
+M5,B15-NOx,NOx,auto-approved,09:00-10:00,A only,QA-01,Quarterly CGA on Boiler 15 NOx,auto,09:00,MA5
+M6,SRU-SO2,SO2,auto-approved,12:50-13:10,A only,,Performed touch up calibration on SO2,auto,,MA7
