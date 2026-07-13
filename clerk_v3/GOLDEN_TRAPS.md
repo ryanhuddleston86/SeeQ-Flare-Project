@@ -52,7 +52,17 @@ Source B15. O2 invalid **09:00–11:00** (reason `MM-01`). NOx and CO have **val
 - TEMP-degF: {}  (not diluent-corrected — unaffected)
 - **One-way check:** O2 is **NOT** down at 13:00 (NOx's own outage does not propagate back to O2).
 
-**T4d — manual diluent outage propagates too.** Same source, but the O2 09:00–11:00 outage comes from a **manual log entry, no capsule** (D7 is source-agnostic). Expected identical: NOx {09,10,+own}, CO {09,10}. A build that propagates only *detected* diluent windows misses this and under-marks — a real live gap, not just a trap.
+**T4d — manual diluent outage propagates too.** Same source, but the O2 09:00–11:00 outage comes from a **manual log entry, no capsule** (D7 is source-agnostic). Expected identical: NOx {09,10,+own}, CO {09,10}. A build that propagates only *detected* diluent windows misses this and under-marks.
+
+> **Status: CLOSED in v3** (was a known mismatch through v2). `build_grid` now
+> unions the diluent's MANUAL windows into each dependent's detected-invalid
+> time alongside its detected windows, so propagation fires identically for a
+> manually-logged and a Seeq-detected diluent outage (one-way preserved).
+> Expected values above are UNCHANGED — they were always the correct
+> hand-derived answer; only the engine moved to meet them. Tests:
+> `test_t4d_manual_diluent_outage_propagates_source_agnostic`,
+> `test_t4d_detected_path_still_identical_no_regression`,
+> `test_t4d_one_way_manual_dependent_outage_does_not_hit_diluent`.
 
 **Discriminator:** if propagation is missing, NOx/CO show only {13:00}/{} and the pollutant downtime is under-marked exactly where Seeq only reported O2. If propagation is two-way, O2 wrongly gains {13:00}. If propagation is detection-only, T4d is missed.
 

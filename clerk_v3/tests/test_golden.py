@@ -254,6 +254,66 @@ def test_t4_o2_diluent_propagates_one_way():
         "one-way: NOx's own outage must not propagate back to O2"
 
 
+def _b15_diluent_units():
+    return [
+        AnalyzerUnit("NOx", "B15", SeeqCovered=True, Obligation="NOx",
+                     DiluentsRole="diluent-corrected", DiluentSpecies="O2",
+                     DiluentBasis="O2"),
+        AnalyzerUnit("CO", "B15", SeeqCovered=True, Obligation="CO",
+                     DiluentsRole="diluent-corrected", DiluentSpecies="O2",
+                     DiluentBasis="O2"),
+        AnalyzerUnit("O2", "B15", SeeqCovered=True, Obligation="O2",
+                     DiluentsRole="diluent", DiluentSpecies="O2"),
+    ]
+
+
+def test_t4d_manual_diluent_outage_propagates_source_agnostic():
+    """GOLDEN T4d (D7 — source-agnostic). The O2 09:00–11:00 outage comes
+    ONLY from a MANUAL log entry (a tech List A TechEntry on O2), with NO
+    Seeq capsule. NOx and CO have clean own signals. Propagation must still
+    fire: NOx and CO invalid 09,10 — identical to the detected case. This
+    is the trap a detection-only build fails."""
+    units = _b15_diluent_units()
+    events = [_tech("O2", _h(9), _h(11), "MM-01")]   # manual only, no capsule
+    cells = _build(events=events, capsules=[],       # <- explicitly no List B
+                   operating=[OperatingWindow("B15", _h(8), _h(12))],
+                   units=units, start=_h(8), end=_h(12))
+    assert _down(cells, "O2") == [_h(9), _h(10)], "the manual O2 outage itself is down"
+    assert _down(cells, "NOx") == [_h(9), _h(10)], \
+        "manual O2 outage propagates to NOx (T4d) — not just detected outages"
+    assert _down(cells, "CO") == [_h(9), _h(10)], "manual O2 outage propagates to CO"
+
+
+def test_t4d_detected_path_still_identical_no_regression():
+    """Companion: the SAME outage as a DETECTED capsule (no manual entry)
+    yields the identical dependent verdicts — the fix did not regress the
+    detected path."""
+    units = _b15_diluent_units()
+    manual = _build(events=[_tech("O2", _h(9), _h(11), "MM-01")], capsules=[],
+                    operating=[OperatingWindow("B15", _h(8), _h(12))],
+                    units=units, start=_h(8), end=_h(12))
+    detected = _build(events=_outage("O2", _h(9), _h(11), "MM-01"),
+                      capsules=[Capsule("O2", "status-offline", _h(9), _h(11))],
+                      operating=[OperatingWindow("B15", _h(8), _h(12))],
+                      units=units, start=_h(8), end=_h(12))
+    for a in ("O2", "NOx", "CO"):
+        assert _down(manual, a) == _down(detected, a), \
+            f"{a}: manual and detected diluent outages must invalidate identically"
+
+
+def test_t4d_one_way_manual_dependent_outage_does_not_hit_diluent():
+    """One-way, manual variant: a NOx-only MANUAL outage must NOT invalidate
+    its O2 diluent (propagation never runs dependent -> diluent)."""
+    units = _b15_diluent_units()
+    events = [_tech("NOx", _h(9), _h(11), "MM-01")]
+    cells = _build(events=events, capsules=[],
+                   operating=[OperatingWindow("B15", _h(8), _h(12))],
+                   units=units, start=_h(8), end=_h(12))
+    assert _down(cells, "NOx") == [_h(9), _h(10)], "NOx's own manual outage"
+    assert _down(cells, "O2") == [], "one-way: O2 must not go down from NOx"
+    assert _down(cells, "CO") == [], "CO independent of NOx"
+
+
 # ---------------------------------------------------------------------------
 # T5 — Redundant temp coverage + coverage-window gating
 # ---------------------------------------------------------------------------

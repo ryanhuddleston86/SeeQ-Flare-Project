@@ -422,13 +422,26 @@ def build_grid(
         hour = window_start
         while hour < window_end:
             hour_end = hour + timedelta(hours=1)
-            # W9: diluent propagation — monitor effective downtime = own downtime
-            # OR diluent-down. A diluent outage (O2/CO2) renders its dependent
-            # pollutant monitors invalid for the same interval, even if the
-            # pollutant analyzer itself shows no direct detected-invalid window.
+            # W9 + T4d: diluent propagation — monitor effective downtime =
+            # own downtime OR diluent-down. A diluent outage (O2/CO2) renders
+            # its dependent pollutant monitors invalid for the same interval,
+            # even when the dependent's own signal is clean.
+            #
+            # T4d (D7 — SOURCE-AGNOSTIC): the diluent's outage propagates
+            # whether it was DETECTED (a Seeq capsule / SeeqDetection, which
+            # lives in detected_windows) OR MANUALLY logged (a tech List A
+            # entry on the diluent analyzer, which lives in manual_windows).
+            # Both feed the dependent as DETECTED-invalid time (subtract-only,
+            # normal branch) — never as the dependent's own maintenance /
+            # (iii)(A) trigger, which belongs to the dependent's OWN manual
+            # windows only. Propagation stays ONE-WAY: only a diluent-corrected
+            # analyzer (non-empty DiluentBasis) pulls from its basis; a diluent
+            # monitor has no basis, so nothing flows back to it.
             own_detected = detected_windows.get(au.Analyzer, [])
             if au.DiluentBasis:
-                own_detected = own_detected + detected_windows.get(au.DiluentBasis, [])
+                own_detected = (own_detected
+                                + detected_windows.get(au.DiluentBasis, [])
+                                + manual_windows.get(au.DiluentBasis, []))
             # F3: a failed daily validation in this hour selects branch (iv);
             # a subsequent pass in the same hour enables (iv)'s recovery test.
             failed_cal_at = passing_cal_at = None
