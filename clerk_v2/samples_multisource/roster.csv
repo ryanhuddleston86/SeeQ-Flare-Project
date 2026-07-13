@@ -1,0 +1,6 @@
+Analyzer,Unit,Obligation,SeeqCovered,DiluentsRole,DiluentSpecies,DiluentBasis
+SRU-SO2,SRU,SO2,true,diluent-corrected,O2,SRU-O2
+SRU-O2,SRU,O2,true,diluent,O2,
+B15-NOx,Boiler_15,NOx,true,diluent-corrected,O2,B15-O2
+B15-CO,Boiler_15,CO,true,diluent-corrected,O2,B15-O2
+B15-O2,Boiler_15,O2,true,diluent,O2,

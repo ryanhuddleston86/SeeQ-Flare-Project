@@ -1,0 +1,7 @@
+Scenario,EventID,Type,TargetEventID,Analyzer,StartUTC,EndUTC,ReasonCode,Category,Actor,ActedAtUTC,Note,CorrectiveAction,DetectionClass
+RUN,D1,SeeqDetection,,SRU-O2,2026-04-02T09:00:00+00:00,2026-04-02T11:00:00+00:00,,,seeq-auto,2026-04-02T09:00:00+00:00,,,status-offline
+RUN,D1-CF,Confirmation,D1,SRU-O2,2026-04-02T09:00:00+00:00,2026-04-02T11:00:00+00:00,MM-01,,j.tech,2026-04-02T09:05:00+00:00,SRU O2 analyzer offline — cell heater failure,Heater replaced 11:00,
+RUN,D2,SeeqDetection,,B15-O2,2026-04-02T13:00:00+00:00,2026-04-02T15:00:00+00:00,,,seeq-auto,2026-04-02T13:00:00+00:00,,,status-offline
+RUN,D2-CF,Confirmation,D2,B15-O2,2026-04-02T13:00:00+00:00,2026-04-02T15:00:00+00:00,MM-01,,j.tech,2026-04-02T13:05:00+00:00,Boiler 15 O2 analyzer offline — sample line plugged,Line cleared 15:00,
+RUN,D3,SeeqDetection,,B15-NOx,2026-04-02T06:00:00+00:00,2026-04-02T08:00:00+00:00,,,seeq-auto,2026-04-02T06:00:00+00:00,,,status-offline
+RUN,D3-CF,Confirmation,D3,B15-NOx,2026-04-02T06:00:00+00:00,2026-04-02T08:00:00+00:00,MM-01,,j.tech,2026-04-02T06:05:00+00:00,Boiler 15 NOx analyzer failed daily cal — drift,Recalibrated 08:00,
