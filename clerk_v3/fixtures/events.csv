@@ -1,0 +1,18 @@
+EventID,EventType,TargetEventID,ExtentStartUTC,ExtentEndUTC,AnalyzerCEMIDs,Category,ReasonCode,Actor,ActedAt,Reason,CorrectiveAction,DetectionClass
+E001,SeeqDetection,,2026-01-15T14:00:00Z,2026-01-15T18:00:00Z,CEMS-001,,,seeq-auto,2026-01-15T14:05:00Z,Automated detection,,status-offline
+E002,Confirmation,E001,2026-01-15T14:00:00Z,2026-01-15T18:00:00Z,CEMS-001,confirmed,MM-01,jsmith,2026-01-15T16:00:00Z,Equipment failure confirmed,Repaired at 18:00,
+E003,SeeqDetection,,2026-01-20T08:00:00Z,2026-01-20T12:00:00Z,CEMS-001,,,seeq-auto,2026-01-20T08:05:00Z,Automated detection,,failed-daily-validation
+E004,DismissalProposed,E003,2026-01-20T08:00:00Z,2026-01-20T12:00:00Z,CEMS-001,dismissal,,jdoe,2026-01-20T10:00:00Z,Instrument calibration in progress,,
+E005,Approval,E003,2026-01-20T08:00:00Z,2026-01-20T12:00:00Z,CEMS-001,dismissal,,supervisor,2026-01-20T11:00:00Z,Approved,,
+E006,TechEntry,,2026-01-22T00:00:00Z,2026-01-22T04:00:00Z,CEMS-002,tech,QA-01,techops,2026-01-22T00:30:00Z,Scheduled maintenance,Completed at 04:00,
+E007,SeeqDetection,,2026-01-25T10:00:00Z,2026-01-25T14:00:00Z,CEMS-002,,,seeq-auto,2026-01-25T10:05:00Z,Automated detection,,status-offline
+E008,Correction,E007,2026-01-25T11:00:00Z,2026-01-25T14:00:00Z,CEMS-002;CEMS-003,correction,MM-01,jsmith,2026-01-25T12:00:00Z,Extent corrected after review,,
+E009,TechEntry,,2026-02-03T09:00:00Z,2026-02-03T15:00:00Z,LUBEFLR-NHV-BTU;LUBEFLR-H2S-PCT;LUBEFLR-H2S-PPM,tech,QA-01,techops,2026-02-03T09:15:00Z,GC maintenance — single instrument feeds all three channels,GC restored 15:00,
+E010,SeeqDetection,,2026-02-10T06:00:00Z,2026-02-10T09:00:00Z,CEMS-002,,,seeq-auto,2026-02-10T06:05:00Z,Automated detection,,status-offline
+E011,DismissalProposed,E010,2026-02-10T06:00:00Z,2026-02-10T09:00:00Z,CEMS-002,dismissal,,jdoe,2026-02-10T07:00:00Z,Proposed dismissal pending review,,
+E012,DismissalRejected,E010,2026-02-10T06:00:00Z,2026-02-10T09:00:00Z,CEMS-002,dismissal,,supervisor,2026-02-10T08:00:00Z,Insufficient evidence for dismissal,,
+E013,BoundaryUpdate,E010,2026-02-10T06:00:00Z,2026-02-10T10:00:00Z,CEMS-002,,,clerk-delta,2026-02-11T09:00:00Z,boundary moved from 2026-02-10T06:00:00Z/2026-02-10T09:00:00Z,,status-offline
+E014,SeeqDetection,,2026-02-12T04:00:00Z,2026-02-12T06:00:00Z,CEMS-003,,,seeq-auto,2026-02-12T04:05:00Z,Automated detection,,status-offline
+E015,Withdrawn,E014,2026-02-12T04:00:00Z,2026-02-12T06:00:00Z,CEMS-003,,,clerk-delta,2026-02-13T23:00:00Z,no matching capsule in re-detection window,,status-offline
+E016,SeeqDetection,,2026-02-14T02:00:00Z,2026-02-14T05:00:00Z,CEMS-001,,,seeq-auto,2026-02-14T02:05:00Z,Automated detection,,status-offline
+E017,Superseded,E016,2026-02-14T02:00:00Z,2026-02-14T05:00:00Z,CEMS-001,,,clerk-delta,2026-02-14T23:00:00Z,merged into surviving ticket,,status-offline
