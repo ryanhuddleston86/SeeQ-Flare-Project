@@ -83,7 +83,9 @@ from clerk.fold import ORIGIN_TYPES, Observation, Status, fold
 from clerk.rules import (
     HourContext,
     evaluate_hour,
+    interval_span,
     intervals_overlap,
+    merge_intervals,
     subtract_intervals,
 )
 from clerk.schemas import (
@@ -322,6 +324,32 @@ def _local_label(hour_start_utc: datetime, tz_name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# OOC (Appendix F §4.3.1) — its OWN scorer, NOT the quadrant scorer.
+# ---------------------------------------------------------------------------
+
+# Governing paragraph label for OOC-touched hours: validation-driven QA/QC,
+# never the fault paragraph.
+OOC_RULE = "OOC"
+
+_FIFTEEN = timedelta(minutes=15)
+
+
+def _score_ooc_hour(operating_in_hour, ooc_in_hour, other_invalid_in_hour):
+    """The whole-hour rule at an OOC boundary hour (and interior hours).
+
+    The OOC span is wholesale invalid — never quadrant-scored. The rest of
+    the hour (operating time OUTSIDE the OOC span, and outside any other
+    invalidity) is adjudicated on its own: if it holds two valid data points
+    at least 15 minutes apart (interval_span >= 15 min under dense sampling),
+    the hour is VALID; otherwise INVALID. An interior hour has no residual
+    valid time, so it falls out INVALID naturally.
+    """
+    residual = subtract_intervals(
+        operating_in_hour, merge_intervals(list(ooc_in_hour) + list(other_invalid_in_hour)))
+    return CellValid.valid if interval_span(residual) >= _FIFTEEN else CellValid.invalid
+
+
+# ---------------------------------------------------------------------------
 # Provenance
 # ---------------------------------------------------------------------------
 
@@ -378,12 +406,21 @@ def build_grid(
     window_start: datetime,
     window_end: datetime,
     validations: Optional[List[ValidationEvent]] = None,
+    ooc_windows: Optional[Dict[str, List[Interval]]] = None,
 ) -> List[GridCell]:
     """Pure function: fixtures (already read) + an explicit [window_start,
     window_end) hour-aligned UTC range -> the grid. Which range to evaluate
     on a given run (LookbackMonths etc.) is run.py's orchestration concern
-    (Step 6), not this module's."""
+    (Step 6), not this module's.
+
+    ooc_windows (v3): {analyzer: [(start, end), ...]} of Out-Of-Control
+    windows from clerk.ooc.compute_ooc_windows (Appendix F §4.3.1). These are
+    scored by their OWN whole-hour QA rule (_score_ooc_hour), never the
+    quadrant scorer, and propagate to diluent dependents like any other
+    invalidity. Compute them (and handle the flagged edge cases) in the
+    caller; pass the resulting windows here."""
     validations = validations or []
+    ooc_windows = ooc_windows or {}
     observations = fold(events)
     origin_types = _origin_types(events)
 
@@ -408,6 +445,14 @@ def build_grid(
     validations_by_analyzer: Dict[str, List[ValidationEvent]] = {}
     for v in validations:
         validations_by_analyzer.setdefault(v.Analyzer, []).append(v)
+
+    # OOC propagation: a diluent's OOC window invalidates its dependents too
+    # (same as any other invalidity). One-way — only diluent-corrected
+    # analyzers pull from their basis; a diluent monitor has no basis.
+    effective_ooc: Dict[str, List[Interval]] = {a: list(w) for a, w in ooc_windows.items()}
+    for au in analyzer_units:
+        if au.DiluentBasis and ooc_windows.get(au.DiluentBasis):
+            effective_ooc.setdefault(au.Analyzer, []).extend(ooc_windows[au.DiluentBasis])
 
     # T2: reason-driven paragraph selection, resolved per analyzer x hour.
     events_by_id = {e.EventID: e for e in events}
@@ -466,7 +511,18 @@ def build_grid(
                 resolved_paragraph=_resolve_hour_paragraph(
                     reason_windows.get(au.Analyzer, []), hour, hour_end),
             )
-            valid, rule_applied = evaluate_hour(ctx)
+            # OOC takes its OWN path when the hour is operating and touched by
+            # an OOC window: wholesale-invalid interior, whole-hour QA rule at
+            # the boundary. It NEVER goes through the quadrant scorer, and the
+            # governing paragraph is OOC (validation-driven QA/QC), not fault.
+            ooc_in_hour = _clip(effective_ooc.get(au.Analyzer, []), hour, hour_end)
+            if ooc_in_hour and ctx.operating:
+                valid = _score_ooc_hour(
+                    ctx.operating, ooc_in_hour,
+                    ctx.manual_qa_windows + ctx.detected_invalid_windows)
+                rule_applied = OOC_RULE
+            else:
+                valid, rule_applied = evaluate_hour(ctx)
             operated = sum((e - s for s, e in ctx.operating), timedelta(0))
             cells.append(GridCell(
                 Analyzer=au.Analyzer,
