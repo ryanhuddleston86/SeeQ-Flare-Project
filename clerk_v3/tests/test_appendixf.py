@@ -289,6 +289,49 @@ def test_dar_downtime_breakdown_by_reason_and_reporting_period_filter():
     assert r.OperatingHours == 7  # hours 2..8 inclusive
 
 
+def test_dar_operating_denominator_clipped_to_reporting_period():
+    """Item 4 (denominator + numerator + reason breakdown all clipped): a fold
+    window WIDER than the reporting period, with unit-offline AND downtime
+    deliberately placed OUTSIDE the period.
+
+    (a) Operating hours = reporting-period clock hours minus IN-PERIOD offline
+        hours — never the full fold-window figure (asserted != full window),
+        and never exceeding the reporting-period clock hours.
+    (b) Out-of-period downtime is excluded from the numerator and the %.
+    (c) The reason breakdown is clipped the same way."""
+    from clerk.listc import ListCRecord
+    units = [AnalyzerUnit("NOx", "U1", SeeqCovered=True, Obligation="NOx")]
+    # 24-hour fold window; report only [6, 18) = 12 clock hours.
+    # unit-offline: hour 2 (OUTSIDE), hour 8 (INSIDE)   -> in-period offline = 1
+    # downtime:     hour 3 (OUTSIDE), hours 10,11 (INSIDE) -> in-period down = 2
+    cells = []
+    for h in range(24):
+        v = CellValid.valid
+        if h in (2, 8):
+            v = CellValid.not_operating
+        if h in (3, 10, 11):
+            v = CellValid.invalid
+        cells.append(_cell("NOx", _t(h), v))
+    records = [ListCRecord("NOx", "auto-approved", [(_t(10), _t(12))], 120.0,
+                           "A only", "", [], [], "MM-01", "", "", "auto",
+                           "single-source", None, ["(i)"], [_t(10), _t(11)], [])]
+    r = dar_rollup(cells, records, units, _t(6), _t(18))[0]
+
+    full_window_operating = sum(1 for c in cells if c.Valid is not CellValid.not_operating)
+    assert full_window_operating == 22, "sanity: fold-window operating (24 - 2 offline)"
+
+    # (a) denominator clipped
+    assert r.OperatingHours == 11, "12 period clock hours minus 1 in-period offline hour"
+    assert r.OperatingHours <= 12, "never exceeds the reporting-period clock hours"
+    assert r.OperatingHours != full_window_operating, "NOT the full fold-window figure"
+    # (b) numerator clipped
+    assert r.DowntimeHours == 2, "the hour-3 down is outside the period"
+    assert r.DowntimePct == round(100.0 * 2 / 11, 3)
+    # (c) reason breakdown clipped
+    assert r.DowntimeByReason["MM"] == 2
+    assert sum(r.DowntimeByReason.values()) == 2, "no out-of-period reason counts leak in"
+
+
 def test_dar_excess_data_not_fabricated_when_absent():
     """Excess-emission duration is 0 and flagged not-provided when no excess
     data is supplied — never inferred from validity."""
