@@ -111,6 +111,68 @@ def test_partial_operating_mqaqc_caps_requirement_at_two():
 
 
 # ---------------------------------------------------------------------------
+# Passing daily validations must NOT create downtime (regression trap)
+# ---------------------------------------------------------------------------
+
+def test_passing_daily_validations_produce_zero_downtime():
+    """Regression: a run of N days of PASSING daily validations (each a
+    ~20-min cal-gas check) and NO other events must produce ZERO downtime for
+    every analyzer — DAR downtime% == 0. A passing validation is normal QA
+    activity (§60.13(h)(2)(iii)), not a monitor outage. Guards against the
+    bug where the cal-gas window killed a quadrant of the full hour and the
+    (i) rule scored the hour DOWN.
+
+    Two analyzers so the "every analyzer" clause is exercised."""
+    units = [AnalyzerUnit("NOx", "U1", SeeqCovered=True, Obligation="NOx"),
+             AnalyzerUnit("SO2", "U1", SeeqCovered=True, Obligation="SO2")]
+    days = 21                       # a full 3-week run, the real-data horizon
+    start, end = _t(0), _t(24 * days)
+
+    # One passing validation per analyzer per day at 06:40-07:00 (cal gas).
+    val = []
+    for a in ("NOx", "SO2"):
+        for d in range(days):
+            base = 24 * d
+            val.append(ValidationCapsule(a, _t(base + 6, 40), _t(base + 7), PASS))
+    ooc, flags = compute_ooc_windows(val, open_tail_end=end)
+    assert ooc == {}, "passing validations create no OOC window"
+    assert flags == []
+
+    mqaqc = {}
+    for v in val:
+        mqaqc.setdefault(v.Analyzer, []).append((v.StartUTC, v.EndUTC))
+
+    # The cal-gas offline ALSO surfaced as a Seeq status-offline detection —
+    # the exact real-run shape that previously scored the hour DOWN under (i).
+    caps = [Capsule(v.Analyzer, "status-offline", v.StartUTC, v.EndUTC) for v in val]
+
+    cells = build_grid(events=[], capsules=caps,
+                       operating_windows=[OperatingWindow("U1", start, end)],
+                       analyzer_units=units, qa_windows=[], config=_cfg(),
+                       window_start=start, window_end=end,
+                       ooc_windows=ooc, mqaqc_windows=mqaqc)
+
+    # Not one invalid hour anywhere in the grid.
+    down = [c for c in cells if c.Valid is CellValid.invalid]
+    assert down == [], f"passing validations produced {len(down)} phantom down-hours"
+
+    # Each validation hour is judged as QA (iii)(A), never (i).
+    for a in ("NOx", "SO2"):
+        for d in range(days):
+            v, rule = _v(cells, a, _t(24 * d + 6))
+            assert (v, rule) == (CellValid.valid, "(iii)(A)"), \
+                f"{a} day {d}: passing-validation hour must be valid via (iii)(A)"
+
+    # DAR downtime% == 0 for EVERY analyzer.
+    rows = dar_rollup(cells, [], units, start, end)
+    assert {r.Analyzer for r in rows} == {"NOx", "SO2"}
+    for r in rows:
+        assert r.DowntimeHours == 0, f"{r.Analyzer}: {r.DowntimeHours} down hours"
+        assert r.DowntimePct == 0.0, f"{r.Analyzer}: downtime {r.DowntimePct}%"
+        assert r.Flag5pctDowntime is False
+
+
+# ---------------------------------------------------------------------------
 # Item 3 (+1,+2) — the "converter" scenario
 # ---------------------------------------------------------------------------
 

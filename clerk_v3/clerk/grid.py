@@ -527,14 +527,26 @@ def build_grid(
                             passing_cal_at = v.ValidatedAtUTC
             # Item 2: MQAQC — a validation/calibration ran in this hour (a
             # validation-check window overlaps, or a manual/QA window exists).
-            mqaqc = bool(_clip(mqaqc_windows.get(au.Analyzer, []), hour, hour_end)) \
-                or bool(_clip(manual_windows.get(au.Analyzer, []), hour, hour_end))
+            mqaqc_in_hour = _clip(mqaqc_windows.get(au.Analyzer, []), hour, hour_end)
+            manual_in_hour = _clip(manual_windows.get(au.Analyzer, []), hour, hour_end)
+            mqaqc = bool(mqaqc_in_hour) or bool(manual_in_hour)
+            # BUGFIX (passing-validation phantom downtime): a validation/cal
+            # window IS a QA activity — §60.13(h)(2)(iii). It must join
+            # manual_qa_windows so the hour is judged by (iii), not (i): (a) it
+            # routes a FULL operating hour to (iii)(A) — two valid points >=15
+            # min apart — instead of (i)'s all-four-quadrants rule, and (b) the
+            # ~20-min cal-gas span is subtracted from valid time (no valid stack
+            # data while on cal gas). With valid data before/after the check, a
+            # routine PASSING daily validation now contributes ZERO downtime —
+            # exactly as a manual QA window already did. A FAILED validation is
+            # unaffected: it enters through its OWN OOC window (App F 4.3.1),
+            # which build_grid scores via _score_ooc_hour, not this branch.
             ctx = HourContext(
                 analyzer=au.Analyzer,
                 hour_start=hour,
                 seeq_covered=au.SeeqCovered,
                 operating=_clip(unit_windows, hour, hour_end),
-                manual_qa_windows=_clip(manual_windows.get(au.Analyzer, []), hour, hour_end),
+                manual_qa_windows=manual_in_hour + mqaqc_in_hour,
                 detected_invalid_windows=_clip(own_detected, hour, hour_end),
                 failed_cal_at=failed_cal_at,
                 passing_cal_at=passing_cal_at,
