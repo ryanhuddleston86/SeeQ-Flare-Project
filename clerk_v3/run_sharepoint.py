@@ -44,7 +44,7 @@ from clerk.adapters import (is_failed_validation,                            # n
                             read_events_sharepoint)
 from clerk.dar import dar_rollup, write_dar                                  # noqa: E402
 from clerk.grid import (build_grid, detection_capsules,                      # noqa: E402
-                        unit_offline_windows_from_capsules)
+                        unit_offline_windows_from_capsules, unresolved_offline_ids)
 from clerk.listc import build_list_c, write_list_c                           # noqa: E402
 from clerk.ooc import ValidationCapsule, compute_ooc_windows                 # noqa: E402
 from clerk.schemas import (Capsule, OperatingWindow, SiteConfig,             # noqa: E402
@@ -110,13 +110,24 @@ def run(events_path, roster_path, out_dir, list_b_path=None, validations_path=No
                 if validations_path and Path(validations_path).exists() else [])
 
     # Item 1: split SeeQ unit-offline capsules out of the detection stream.
+    # These are UNIT-level (identity resolves to a unit, e.g. 'Boiler_15 - UNIT'
+    # or a bare 'Boiler_15'); they are NOT analyzer-level and are excluded from
+    # the analyzer roster-membership check below.
     unit_offline = unit_offline_windows_from_capsules(all_capsules, analyzer_units)
     capsules = detection_capsules(all_capsules)
 
+    bad_offline = unresolved_offline_ids(all_capsules, analyzer_units)
+    if bad_offline:
+        raise SystemExit(f"Unit-offline capsules resolve to no known unit: {bad_offline}\n"
+                         f"(use the unit name, e.g. 'Boiler_15' or 'Boiler_15 - UNIT'; "
+                         f"known units: {sorted({au.Unit for au in analyzer_units})})")
+
+    # Analyzer-level identities only (events, detection capsules, validations).
+    offline_ids = {c.Analyzer for c in all_capsules if c.DetectionClass == "unit-offline"}
     known = {au.Analyzer for au in analyzer_units}
     referenced = ({a for e in events for a in e.AnalyzerCEMIDs}
-                  | {c.Analyzer for c in all_capsules}
-                  | {v.Analyzer for v in val_caps})
+                  | {c.Analyzer for c in capsules}
+                  | {v.Analyzer for v in val_caps}) - offline_ids
     unknown = sorted(referenced - known)
     if unknown:
         raise SystemExit(f"These analyzers appear in the inputs but not in the "

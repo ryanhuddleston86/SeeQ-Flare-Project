@@ -234,3 +234,24 @@ def test_dar_excess_data_not_fabricated_when_absent():
     cells = [_cell("NOx", _t(h), CellValid.valid) for h in range(10)]
     r = dar_rollup(cells, [], units, _t(0), _t(10))[0]
     assert r.ExcessHours == 0 and r.ExcessDataProvided is False
+
+
+# ---------------------------------------------------------------------------
+# Unit-offline capsule identity resolution (production 'Unit - UNIT' form)
+# ---------------------------------------------------------------------------
+
+def test_unit_offline_identity_forms_resolve_to_unit():
+    from clerk.grid import (resolve_offline_unit, unresolved_offline_ids,
+                            unit_offline_windows_from_capsules)
+    roster = [AnalyzerUnit("Boiler_15 - NOx", "Boiler_15", SeeqCovered=True, Obligation="NOx"),
+              AnalyzerUnit("SRU - O2", "SRU", SeeqCovered=True, Obligation="O2")]
+    # all three accepted identity forms
+    assert resolve_offline_unit("Boiler_15 - UNIT", roster) == "Boiler_15"   # <Unit> - suffix
+    assert resolve_offline_unit("Boiler_15", roster) == "Boiler_15"          # bare unit
+    assert resolve_offline_unit("Boiler_15 - NOx", roster) == "Boiler_15"    # real analyzer id
+    assert resolve_offline_unit("Nope - UNIT", roster) is None               # unknown unit
+    caps = [Capsule("Boiler_15 - UNIT", "unit-offline", _t(2), _t(4)),
+            Capsule("Bogus - UNIT", "unit-offline", _t(1), _t(2))]
+    assert unresolved_offline_ids(caps, roster) == ["Bogus - UNIT"], "fail-loud list"
+    windows = unit_offline_windows_from_capsules(caps, roster)
+    assert windows == {"Boiler_15": [(_t(2), _t(4))]}, "keyed by resolved unit"

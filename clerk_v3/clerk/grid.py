@@ -583,20 +583,53 @@ def build_grid(
 UNIT_OFFLINE_CLASS = "unit-offline"
 
 
+def resolve_offline_unit(identity: str, analyzer_units: List[AnalyzerUnit]) -> Optional[str]:
+    """Resolve a unit-offline capsule's identity to a UNIT. A unit-offline
+    capsule is unit-level; its `Analyzer` field may be any of:
+      - a real roster analyzer id  ("Boiler_15 - NOx")   -> that analyzer's Unit
+      - a bare unit name           ("Boiler_15")         -> that unit
+      - a "<Unit> - <suffix>" tag  ("Boiler_15 - UNIT")  -> the leading Unit
+    Returns the Unit, or None if it resolves to no known unit."""
+    unit_of = {au.Analyzer: au.Unit for au in analyzer_units}
+    units = {au.Unit for au in analyzer_units}
+    if identity in unit_of:
+        return unit_of[identity]
+    if identity in units:
+        return identity
+    if " - " in identity:
+        head = identity.rsplit(" - ", 1)[0].strip()
+        if head in units:
+            return head
+    return None
+
+
 def unit_offline_windows_from_capsules(
     capsules: List[Capsule],
     analyzer_units: List[AnalyzerUnit],
 ) -> Dict[str, List[Interval]]:
     """Item 1: pull SeeQ unit-offline capsules (DetectionClass 'unit-offline')
-    out of the capsule stream and key them by UNIT. A unit-offline capsule is
-    named by an analyzer; it applies to that analyzer's whole unit."""
-    unit_of = {au.Analyzer: au.Unit for au in analyzer_units}
+    out of the capsule stream and key them by UNIT (see resolve_offline_unit
+    for the accepted identity forms). Capsules whose identity resolves to no
+    known unit are skipped here — the runner validates and fails loud on
+    those via unresolved_offline_ids()."""
     out: Dict[str, List[Interval]] = {}
     for c in capsules:
         if c.DetectionClass == UNIT_OFFLINE_CLASS:
-            unit = unit_of.get(c.Analyzer, c.Analyzer)
-            out.setdefault(unit, []).append((c.CapsuleStartUTC, c.CapsuleEndUTC))
+            unit = resolve_offline_unit(c.Analyzer, analyzer_units)
+            if unit is not None:
+                out.setdefault(unit, []).append((c.CapsuleStartUTC, c.CapsuleEndUTC))
     return out
+
+
+def unresolved_offline_ids(
+    capsules: List[Capsule],
+    analyzer_units: List[AnalyzerUnit],
+) -> List[str]:
+    """Unit-offline capsule identities that resolve to no known unit — the
+    runner fails loud on these rather than silently dropping the offline."""
+    return sorted({c.Analyzer for c in capsules
+                   if c.DetectionClass == UNIT_OFFLINE_CLASS
+                   and resolve_offline_unit(c.Analyzer, analyzer_units) is None})
 
 
 def detection_capsules(capsules: List[Capsule]) -> List[Capsule]:
