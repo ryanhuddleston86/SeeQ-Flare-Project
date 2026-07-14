@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+
+# Data Lab / distribution build artifacts (regenerated on demand)
+*.zip
+clerk_v3/datalab_build/
