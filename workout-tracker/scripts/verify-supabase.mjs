@@ -44,6 +44,14 @@ const record = (ok, name, detail) => {
   console.log(`${ok ? '  ok  ' : ' FAIL '} ${name}${detail ? ` — ${detail}` : ''}`)
 }
 
+// PostgREST reports errors as a JSON object carrying a `code`/`message`. A 403
+// from a proxy or network allowlist arrives as a bare string or HTML, and must
+// not be mistaken for a policy doing its job.
+function isPostgrestError(payload) {
+  return Boolean(payload) && typeof payload === 'object' && !Array.isArray(payload) &&
+    (typeof payload.code === 'string' || typeof payload.message === 'string')
+}
+
 async function request(method, path, body) {
   const response = await fetch(`${endpoint}${path}`, {
     method,
@@ -66,6 +74,11 @@ console.log(`\nChecking ${url}\n`)
 const read = await request('GET', '?select=id&limit=1')
 if (read.status === 200) {
   record(true, 'table exists and is readable')
+} else if (!isPostgrestError(read.payload)) {
+  // Nothing past this point can be trusted if the host is unreachable.
+  console.error(`\n Cannot reach ${url} — HTTP ${read.status}: ${JSON.stringify(read.payload)}`)
+  console.error(' This is a network or proxy problem, not a Supabase one. Check the URL and your connection.\n')
+  process.exit(1)
 } else if (read.status === 404) {
   record(false, 'table exists and is readable', 'workout_logs not found — run supabase/schema.sql')
 } else if (read.status === 401) {
@@ -83,8 +96,10 @@ const intruder = await request('POST', '', {
   track: 'gym',
   day: 'Day 1',
 })
-if (intruder.status === 401 || intruder.status === 403) {
-  record(true, 'RLS blocks unknown user names')
+if ((intruder.status === 401 || intruder.status === 403) && isPostgrestError(intruder.payload)) {
+  record(true, 'RLS blocks unknown user names', `rejected with ${intruder.payload.code || 'no code'}`)
+} else if (intruder.status === 401 || intruder.status === 403) {
+  record(false, 'RLS blocks unknown user names', `rejected by something other than PostgREST: ${JSON.stringify(intruder.payload)}`)
 } else if (intruder.status === 201) {
   record(false, 'RLS blocks unknown user names', 'INSERT SUCCEEDED — the table is writable by anyone. Rerun supabase/schema.sql')
 } else if (intruder.status === 400) {
@@ -103,7 +118,7 @@ const badTrack = await request('POST', '', {
   track: 'not-a-track',
   day: 'Day 1',
 })
-if (badTrack.status === 400) {
+if (badTrack.status === 400 && isPostgrestError(badTrack.payload)) {
   record(true, 'CHECK constraints reject bad track values')
 } else if (badTrack.status === 201) {
   record(false, 'CHECK constraints reject bad track values', 'a row was created and must be deleted from the dashboard')
