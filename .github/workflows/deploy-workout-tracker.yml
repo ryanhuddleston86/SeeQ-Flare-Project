@@ -2,7 +2,12 @@ name: Deploy workout tracker
 
 on:
   push:
-    branches: [main]
+    # This repository's default branch is claude/cemvault-handoff-pf3q2n, not
+    # main. Both are listed so the deploy keeps working if a main branch is
+    # created later.
+    branches:
+      - main
+      - claude/cemvault-handoff-pf3q2n
     paths:
       - 'workout-tracker/**'
       - '.github/workflows/deploy-workout-tracker.yml'
