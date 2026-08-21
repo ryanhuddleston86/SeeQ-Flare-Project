@@ -1,0 +1,68 @@
+name: Deploy workout tracker
+
+on:
+  push:
+    # This repository's default branch is claude/cemvault-handoff-pf3q2n, not
+    # main. Both are listed so the deploy keeps working if a main branch is
+    # created later.
+    branches:
+      - main
+      - claude/cemvault-handoff-pf3q2n
+    paths:
+      - 'workout-tracker/**'
+      - '.github/workflows/deploy-workout-tracker.yml'
+  workflow_dispatch:
+
+# Allow the workflow to publish to GitHub Pages.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; in-flight runs finish rather than being cancelled.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workout-tracker
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: workout-tracker/package-lock.json
+
+      - run: npm ci
+
+      - run: npm test
+
+      - run: npm run build
+        env:
+          # The anon key is public by design — row-level security is what
+          # protects the table. Storing it as a secret just keeps it out of the
+          # committed source.
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: workout-tracker/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
