@@ -21,9 +21,28 @@ consistency. No signup, no passwords — you pick your name on load.
 
 ### 1. Supabase
 
-Create a free project, then run [`supabase/schema.sql`](supabase/schema.sql) in
-the SQL editor. That creates `workout_logs`, its indexes, and the row-level
-security policies.
+This part needs your Supabase account, so it has to be done by hand once:
+
+1. Sign in at [supabase.com](https://supabase.com) and **New project**. The free
+   tier is enough — three people logging four sessions a week is a few hundred
+   rows a year.
+2. Name it whatever you like, set a database password (you won't need it for
+   this app), and pick the region closest to you.
+3. When it finishes provisioning, open **SQL Editor → New query**, paste all of
+   [`supabase/schema.sql`](supabase/schema.sql), and run it. That creates
+   `workout_logs`, its indexes, and the row-level security policies.
+4. Copy the project URL and the `anon` `public` key from
+   **Project Settings → API**.
+
+Then confirm it all landed:
+
+```bash
+npm run verify
+```
+
+That checks the table exists, that the anon key can read, and — the one that
+matters — that row-level security actually rejects a write under an unknown
+name. It writes nothing that survives. Fix anything it flags before deploying.
 
 The policies allow `select` and `insert` only when `user_name` is one of the
 three known names, and there is no `update` or `delete` policy at all. The anon
@@ -43,6 +62,7 @@ npm run dev
 ```
 
 `npm test` runs the week-math, streak, and leaderboard unit tests.
+`npm run verify` checks the Supabase project and its policies.
 `npm run build` produces `dist/`.
 
 ### 3. Deploying to GitHub Pages
@@ -80,6 +100,7 @@ workout-tracker/
 │       ├── dates.js             # local-date and week math
 │       ├── stats.js             # week board, streaks, leaderboard
 │       └── supabase.js          # client, fetch, insert
+├── scripts/verify-supabase.mjs  # non-destructive schema and RLS check
 ├── supabase/schema.sql          # table, indexes, RLS policies
 └── test/stats.test.js           # unit tests for the math above
 ```
